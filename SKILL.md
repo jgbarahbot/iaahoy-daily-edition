@@ -8,10 +8,18 @@ platforms: [linux]
 metadata:
   hermes:
     tags: [iaahoy, daily-newspaper, github-pages, open-ai, spanish, cron, podcast]
-    related_skills: [espanish-podcast, news-digest, github-repo-management]
+    requires_skills: [espanish-podcast]
+    related_skills: [news-digest, github-repo-management]
 ---
 
 # ia·ahoy — daily open-AI newspaper + podcast (Spanish)
+
+**Depends on the `espanish-podcast` skill** (hard requirement for step 4):
+it owns the two-voice Piper TTS pipeline, the script format and the
+English-term pronunciation rules. Install it first:
+`hermes skills install github.com/jgbarahbot/espanish-podcast` — step 4 calls
+`~/.hermes/skills/espanish-podcast/scripts/make_podcast.py`, so it fails if
+that path is missing.
 
 Static-HTML "newspaper" about open-weights models + open-source AI software,
 published daily to GitHub Pages: **https://jgbarahbot.github.io/iaahoy**,
@@ -28,9 +36,8 @@ Title: **"IA Abierta Hoy"** (short form: **IA*A*Hoy**).
 - Project: `~/.hermes/projects/iaahoy/`
   - `scripts/collector.py`   — gathers raw material → `material.json`
   - `scripts/render.py`      — edition JSON → standalone HTML (CSS inlined)
-  - `scripts/make_podcast.py`— local copy; the canonical script lives in the
-                                `espanish-podcast` skill (step 4 calls it from
-                                `~/.hermes/skills/espanish-podcast/scripts/`)
+  - (podcast audio is NOT synthesized here — the `espanish-podcast` skill owns
+                                `make_podcast.py`, see step 4)
   - `scripts/publish.py`     — re-render all editions, copy podcast, FLATTEN
                                 git history (orphan + force-push) to GitHub
   - `templates/style.css`    — broadsheet CSS (render.py inlines it)
@@ -50,8 +57,11 @@ var name, never type the literal word in code strings.
 - TTS: DELEGATED to the `espanish-podcast` skill — it owns the script format,
   the two-voice Piper pipeline (A = `es_ES-davefx-medium`, C =
   `es_MX-claude-high`, both 22050 Hz, user-fixed pair "usa solo a y c"),
-  English-term IPA and all TTS requirements/pitfalls. This skill only WRITES
-  the script and calls the other skill's `make_podcast.py`.
+  English-term pronunciation (dictionary + numbers-in-Spanish + espeak IPA
+  fallback) and all TTS requirements/pitfalls. This skill only WRITES the
+  script and calls the other skill's `make_podcast.py`. After a podcast run,
+  relay any `UNSURE: <term>` lines the script prints to the user (they are
+  pronunciation candidates for `pron_dict.json`).
 
 ## The 6-step pipeline (run in order)
 
@@ -76,6 +86,8 @@ Load `espanish-podcast` before the first run of the day:
    string in the form:
    `Contenido generado automáticamente a partir de fuentes públicas por Hermes, usando <MODELO>, para que lo disfrutes y te sea útil.`
    where `<MODELO>` is the LLM actually generating it (e.g. "Qwen3.8-27B").
+   It MUST also carry the `made_with` list (the two skill names with their
+   GitHub repo URLs, see the schema) — it renders the "Hecho con Hermes" note.
    The CC BY-SA 4.0 license block is rendered by render.py — do not hand-write it.
 3. **Write the podcast script (YOU).** Write
    `editions/<TODAY>.podcast.txt` in **natural, spoken Spanish** — a
@@ -143,10 +155,17 @@ Load `espanish-podcast` before the first run of the day:
   "colophon": {
     "title": "IA Abierta Hoy",
     "short_title": "IA*A*Hoy",
+    "made_with": [
+      "el skill iaahoy-daily-edition (https://github.com/jgbarahbot/iaahoy-daily-edition) — recolección, curado y publicación",
+      "el skill espanish-podcast (https://github.com/jgbarahbot/espanish-podcast) — el podcast en audio"
+    ],
     "fineprint": "Contenido generado automáticamente a partir de fuentes públicas por Hermes, usando <MODELO>, para que lo disfrutes y te sea útil."
   }
 }
 ```
+The `made_with` list feeds the "Hecho con Hermes" note at the bottom of the
+page (render.py turns each trailing `https://github.com/…/…` URL into a link)
+— always keep the two skill entries with their repo URLs.
 Suggested section titles (adapt to the day's news): **Modelos**, **Agentes y
 software**, **Papers e investigación**, **Comunidad y self-hosting**. Keep the
 lead to the single most important item of the day.

@@ -154,6 +154,31 @@ def render_cc_license():
     return '<div class="license">' + badge + name + "</div>"
 
 
+def _linkify_repo(s):
+    """Turn a github.com/<user>/<repo> URL inside a string into a link.
+
+    Matches the first GitHub repo URL and links it; the match stops at a
+    closing paren, whitespace or end-of-string so it works in both the
+    "el skill x (https://github.com/u/r) — desc" and bare-URL forms."""
+    m = re.search(r"https?://github\.com/[\w.-]+/[\w.-]+?(?=[\s)\]]|$)", s)
+    if not m:
+        return esc(s)
+    url = m.group(0).rstrip(")\]")
+    return (esc(s[:m.start()])
+            + '<a href="%s" rel="noopener">%s</a>' % (esc(url), esc(url))
+            + esc(s[m.end():]))
+
+
+def render_made_with(col):
+    """'Hecho con Hermes' note: credits Hermes + the skills that built this."""
+    items = col.get("made_with") or []
+    if not items:
+        return ""
+    lis = "".join("<li>%s</li>" % _linkify_repo(x) for x in items)
+    return ('<p class="made-with"><b>Hecho con Hermes</b> — este diario se genera '
+            "automáticamente gracias a estos skills:<ul class=\"made-list\">%s</ul></p>" % lis)
+
+
 def render_colophon(col, base):
     about = esc(col.get("about", ""))
     srcs = " · ".join(esc(s) for s in col.get("sources", []))
@@ -161,6 +186,7 @@ def render_colophon(col, base):
     h = '<footer class="colophon"><div class="wrap"><h6>El colofón</h6><div class="cols"><div>'
     h += about
     h += '</div><div><b>Fuentes de esta edición</b><br>%s</div></div>' % srcs
+    h += render_made_with(col)
     h += '<p class="fineprint">%s</p>' % fine
     h += render_cc_license()
     h += "</div></footer>"
@@ -243,7 +269,15 @@ def build_editions_index(editions, css, podcast_url):
     h += '<p class="sec-blurb">Cada día a las 08:30 (CEST) sale una nueva. Las antiguas quedan como enlace permanente.</p>'
     h += '<ul class="editions-list">' + "".join(items) + "</ul>"
     h += "</section></div></div></main>"
-    h += render_colophon({"about": "IA Abierta Hoy (ia·ahoy): archivo de ediciones diarias de IA abierta.", "sources": [], "fineprint": "Contenido generado automáticamente a partir de fuentes públicas por Hermes."}, "editions")
+    h += render_colophon({
+        "about": "IA Abierta Hoy (ia·ahoy): archivo de ediciones diarias de IA abierta.",
+        "sources": [],
+        "made_with": [
+            "el skill iaahoy-daily-edition (https://github.com/jgbarahbot/iaahoy-daily-edition) — recolección, curado y publicación",
+            "el skill espanish-podcast (https://github.com/jgbarahbot/espanish-podcast) — el podcast en audio",
+        ],
+        "fineprint": "Contenido generado automáticamente a partir de fuentes públicas por Hermes.",
+    }, "editions")
     h += "</body></html>"
     return h
 
