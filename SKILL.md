@@ -167,3 +167,7 @@ lead to the single most important item of the day.
 The daily 08:30 job (08:30 CEST) fires this exact flow. When you run it, your
 FINAL RESPONSE is delivered to the user — write a 2–4 line Spanish summary:
 edition date, the portada headline, 2–3 other highlights, and the live URL.
+
+## Keeping this skill in sync with GitHub
+This directory is a git repo tracking `jgbarahbot/iaahoy-daily-edition`. After any local edit, run `./sync.sh` (commits, fast-forwards, and pushes using `GITHUB_CONTENT_RW_TOKEN` from `~/.hermes/.env`).
+
