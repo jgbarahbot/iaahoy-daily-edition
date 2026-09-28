@@ -51,6 +51,17 @@ to iaahoy only). Read-only `GITHUB_TOKEN` is enough for the collector's GitHub
 API. Do NOT print secret values. NOTE: Hermes's redaction layer rewrites the
 word "token" (lowercase) in tool-call strings — reference the secret as the env
 var name, never type the literal word in code strings.
+- **Parameterized GitHub identity (no hardcoded username/repo/token in code):**
+  `publish.py` and `sync.sh` resolve everything as CLI > env > derived:
+  - GitHub username → `--user` / `IAAHOY_GH_USER` / **token's own login**
+    (derived via `GET https://api.github.com/user` with the token).
+  - push token var → `--token-env` (default `GITHUB_IAAHOY_TOKEN`).
+  - site repo URL → `--repo` / `IAAHOY_SITE_REPO` (default `https://github.com/<user>/iaahoy.git`).
+  - Pages URL → `--site-url` / `IAAHOY_SITE_URL` (default derived from repo).
+  To retarget another account, set `IAAHOY_GH_USER` and `IAAHOY_SITE_REPO` in
+  `~/.hermes/.env` — no code edit. Same rule for `sync.sh`: `SKILL_REPO=<owner>/<name>`
+  (default `<owner>/<skill-name>`) + `SKILL_TOKEN_ENV` (default `GITHUB_CONTENT_RW_TOKEN`);
+  the token's login is used as the git auth user automatically.
 - SearXNG (self-hosted, no key): `http://127.0.0.1:8080/search?format=json`.
   Reddit direct API is datacenter-blocked → use SearXNG for subreddit/news.
 - `web_extract` tool is NOT configured — don't rely on it; use `curl` + `web_search`.

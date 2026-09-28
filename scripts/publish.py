@@ -2,7 +2,7 @@
 """iaahoy publisher — renders the site from edition JSONs and pushes to
 GitHub Pages, flattening history each day so NO old podcasts are kept.
 
-Site layout (repo root = jgbarahbot/iaahoy, a GitHub *project* site):
+Site layout (repo = <owner>/<site-repo>, a GitHub *project* site):
     index.html                  -> latest edition
     editions/<YYYY-MM-DD>.html  -> dated permalink per edition
     editions/index.html         -> archive (all editions, newest first)
@@ -18,13 +18,23 @@ Flow:  assemble() -> build/site   |  clone to git/   |  sync build/site -> git/
 A safety guard refuses to push if the tree would be empty (e.g. a render
 failure), so a bad run can never wipe the live site.
 
-Env overrides (used for testing against a scratch remote):
-    IAAHOY_REPO   remote URL   (default https://github.com/jgbarahbot/iaahoy.git)
-    IAAHOY_GIT    clone dir    (default <project>/git)
+PARAMETERIZATION — no GitHub identity is hardcoded in this script. Everything
+is a parameter, resolved in this precedence (CLI > env > derived):
+    --user / IAAHOY_GH_USER     GitHub username (for auth + commit author).
+                                 Defaults to the token's own login, derived
+                                 from the GitHub API, so no config is needed.
+    --token-env                 Name of the env var holding the push token
+                                 (default: GITHUB_IAAHOY_TOKEN).
+    --repo / IAAHOY_SITE_REPO   Remote URL to push to
+                                 (default: https://github.com/<user>/iaahoy.git).
+    --site-url / IAAHOY_SITE_URL  Optional Pages URL for the final report
+                                 (default: derived from the repo).
+    IAAHOY_GIT                  clone dir (default <project>/git).
 
 Usage:
     python publish.py            # render + assemble + flatten + force-push
     python publish.py --no-push  # render + assemble + local orphan commit only
+    python publish.py --dry-run  # assemble only; no git at all
 """
 import argparse
 import json
@@ -33,26 +43,71 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.request
 
 PROJ = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 EDITIONS_DIR = os.path.join(PROJ, "editions")
 BUILD = os.path.join(PROJ, "build", "site")
 GIT = os.environ.get("IAAHOY_GIT", os.path.join(PROJ, "git"))
-REPO = os.environ.get("IAAHOY_REPO", "https://github.com/jgbarahbot/iaahoy.git")
 RENDER = os.path.join(PROJ, "scripts", "render.py")
 CSS = os.path.join(PROJ, "templates", "style.css")
 PODCAST_SRC = os.path.join(PROJ, "build", "podcast.mp3")
 DATE_JSON_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.json$")
+ENV_PATH = os.path.expanduser("~/.hermes/.env")
 
 
-def load_env_token():
-    env_path = os.path.expanduser("~/.hermes/.env")
-    if os.path.exists(env_path):
-        with open(env_path, encoding="utf-8") as f:
+def _env_var(name):
+    """Read one variable from ~/.hermes/.env (first occurrence)."""
+    if os.path.exists(ENV_PATH):
+        with open(ENV_PATH, encoding="utf-8") as f:
             for line in f:
-                if line.startswith("GITHUB_IAAHOY_TOKEN="):
+                if line.startswith(name + "="):
                     return line.split("=", 1)[1].strip()
-    return os.environ.get("GITHUB_IAAHOY_TOKEN", "")
+    return os.environ.get(name, "")
+
+
+def resolve_token(token_env):
+    return os.environ.get(token_env, "") or _env_var(token_env)
+
+
+def derive_user_from_token(token):
+    """GitHub username owning `token`, via the /user API ('' if unavailable)."""
+    if not token:
+        return ""
+    try:
+        req = urllib.request.Request("https://api.github.com/user",
+                                     headers={"Authorization": "Bearer " + token,
+                                              "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.load(resp).get("login", "") or ""
+    except Exception:
+        return ""
+
+
+def resolve_user(cli_user, token):
+    """CLI > IAAHOY_GH_USER (env file or environ) > token's login (derived)."""
+    return cli_user or os.environ.get("IAAHOY_GH_USER") \
+        or _env_var("IAAHOY_GH_USER") or derive_user_from_token(token)
+
+
+def resolve_repo(cli_repo, user):
+    """CLI > IAAHOY_SITE_REPO (env file or environ) > https://github.com/<user>/iaahoy.git."""
+    return cli_repo or os.environ.get("IAAHOY_SITE_REPO") \
+        or _env_var("IAAHOY_SITE_REPO") or "https://github.com/%s/iaahoy.git" % user
+
+
+def resolve_site_url(cli_url, repo):
+    """Pages URL: CLI > IAAHOY_SITE_URL > derived from repo <owner>/<name>."""
+    if cli_url:
+        return cli_url
+    env_url = os.environ.get("IAAHOY_SITE_URL") or _env_var("IAAHOY_SITE_URL")
+    if env_url:
+        return env_url
+    tail = repo.split("github.com/", 1)[-1].strip("/").removesuffix(".git")
+    owner, _, name = tail.rpartition("/")
+    if not owner or not name:
+        return ""
+    return "https://%s.github.io/%s/" % (owner, name)
 
 
 def run(cmd, cwd=None):
@@ -152,13 +207,13 @@ def sync_into_git():
             shutil.copyfile(os.path.join(root, fn), os.path.join(dest, fn))
 
 
-def _flatten_commit(latest_date):
+def _flatten_commit(user, latest_date):
     """Drop history and commit the current working tree as a single root
     commit on 'main'. Returns 0 on success, 1 if the tree is unsafe (empty).
     The live site is only touched later, on force-push — and only if this
     returns 0 with a non-empty tree that contains index.html."""
-    run(["git", "-C", GIT, "config", "user.name", "jgbarahbot"])
-    run(["git", "-C", GIT, "config", "user.email", "jgbarahbot@users.noreply.github.com"])
+    run(["git", "-C", GIT, "config", "user.name", user])
+    run(["git", "-C", GIT, "config", "user.email", user + "@users.noreply.github.com"])
     # stage the tree, then drop history so main becomes unborn
     run(["git", "-C", GIT, "add", "-A"])
     run(["git", "-C", GIT, "update-ref", "-d", "refs/heads/main"])
@@ -176,12 +231,26 @@ def _flatten_commit(latest_date):
     return 0
 
 
-def git_flatten_push(no_push):
-    token = load_env_token()
+def _auth_url(repo, user, token):
+    """Build the authenticated clone/push URL.
+
+    Fine-grained PATs (github_pat_) REQUIRE the owning username as the git
+    user; the legacy 'x-access-token' username is rejected with 403 for those.
+    Classic PATs work with either, so keep 'x-access-token' as the fallback
+    only when no username is known."""
+    auth_user = user or "x-access-token"
+    return repo.replace("https://", "https://" + auth_user + ":" + token + "@")
+
+
+def git_flatten_push(no_push, user, token, repo, site_url):
     if not token:
-        print("ERROR: GITHUB_IAAHOY_TOKEN not found")
+        print("ERROR: push token not found (set the token env var or pass --token-env)")
         return 1
-    auth_url = REPO.replace("https://", "https://x-access-token:" + token + "@")
+    if not user:
+        print("ERROR: could not determine the GitHub username "
+              "(pass --user, set IAAHOY_GH_USER, or use a token whose login is resolvable)")
+        return 1
+    auth_url = _auth_url(repo, user, token)
     # self-heal: re-clone if git/ is missing or corrupted
     if os.path.isdir(GIT) and not _git_ok():
         print("git/ present but broken — re-cloning")
@@ -190,10 +259,10 @@ def git_flatten_push(no_push):
         r = run(["git", "clone", auth_url, GIT])
         if r.returncode != 0:
             print("clone failed; initializing fresh repo (first push)")
-            return _fresh(auth_url, no_push)
+            return _fresh(auth_url, user, no_push)
     sync_into_git()
     latest = collect_editions()[0]["date"]
-    if _flatten_commit(latest) != 0:
+    if _flatten_commit(user, latest) != 0:
         return 1
     if no_push:
         print("[no-push] single root commit made locally; not pushed")
@@ -202,16 +271,18 @@ def git_flatten_push(no_push):
     if r.returncode != 0:
         print("PUSH FAILED:\n" + r.stderr)
         return 1
-    print(f"flattened + force-pushed main (single commit for {latest})")
+    print(f"flattened + force-pushed {repo} main (single commit for {latest})")
+    if site_url:
+        print(f"site: {site_url}")
     return 0
 
 
-def _fresh(auth_url, no_push):
+def _fresh(auth_url, user, no_push):
     os.makedirs(GIT, exist_ok=True)
     run(["git", "-C", GIT, "init", "-b", "main"])
     sync_into_git()
-    run(["git", "-C", GIT, "config", "user.name", "jgbarahbot"])
-    run(["git", "-C", GIT, "config", "user.email", "jgbarahbot@users.noreply.github.com"])
+    run(["git", "-C", GIT, "config", "user.name", user])
+    run(["git", "-C", GIT, "config", "user.email", user + "@users.noreply.github.com"])
     run(["git", "-C", GIT, "add", "-A"])
     st = run(["git", "-C", GIT, "status", "--porcelain"]).stdout.strip()
     if not st or "index.html" not in run(["git", "-C", GIT, "ls-files"]).stdout:
@@ -234,12 +305,27 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-push", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--user", default="",
+                    help="GitHub username (default: token's login, else IAAHOY_GH_USER)")
+    ap.add_argument("--token-env", default="GITHUB_IAAHOY_TOKEN",
+                    help="name of the env var holding the push token")
+    ap.add_argument("--repo", default="",
+                    help="remote URL (default: IAAHOY_SITE_REPO, else <user>/iaahoy.git)")
+    ap.add_argument("--site-url", default="",
+                    help="Pages URL for the final report (default: derived from repo)")
     args = ap.parse_args()
+    token = resolve_token(args.token_env)
+    user = resolve_user(args.user, token)
+    repo = resolve_repo(args.repo, user)
+    site_url = resolve_site_url(args.site_url, repo)
+    print(f"publish: user={user} repo={repo} site={site_url or '(unknown)'}")
+    if not args.dry_run and not token:
+        print(f"NOTE: no token for '{args.token_env}' — the push step will fail")
     assemble()
     if args.dry_run:
         print("[dry-run] no git")
         return 0
-    sys.exit(git_flatten_push(args.no_push))
+    sys.exit(git_flatten_push(args.no_push, user, token, repo, site_url))
 
 
 if __name__ == "__main__":
