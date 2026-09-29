@@ -1,7 +1,7 @@
 ---
 name: iaahoy-daily-edition
 description: "iaahoy: produce + publish daily Spanish open-AI newspaper."
-version: 2.1.0
+version: 2.2.0
 author: jgbarah
 license: MIT
 platforms: [linux]
@@ -113,12 +113,21 @@ Load `espanish-podcast` before the first run of the day:
    **Do NOT mention the number of voices or narrator identity in the script —
    just use the voices naturally.** Don't overdo asterisks: only mark genuine
    English terms, not Spanish words.
-4. **Podcast audio — DELEGATE to the `espanish-podcast` skill** (deterministic):
-   `python3 ~/.hermes/skills/espanish-podcast/scripts/make_podcast.py --script editions/<TODAY>.podcast.txt --out build/podcast.mp3`
-   This skill does NOT synthesize audio itself; `espanish-podcast` owns the
-   TTS pipeline (script format, two Piper voices, English IPA, verification).
-   Produces the single-slot MP3. Old audio is NOT kept — publish.py flattens the
-   git history each day, so only today's MP3 survives.
+4. **Podcast audio — DELEGATE to the `espanish-podcast` skill, via the
+   systemd launcher (CosyVoice3, CPU)** (deterministic, ~25–35 min):
+   `bash ~/.hermes/projects/iaahoy/scripts/podcast_systemd.sh --script ~/.hermes/projects/iaahoy/editions/<TODAY>.podcast.txt --out ~/.hermes/projects/iaahoy/build/podcast.mp3`
+   **Why the launcher:** Hermes worker cgroups are hard-capped at 4 GiB
+   (`process_registry._WORKER_MEMORY_MAX_CAP_BYTES`); CosyVoice3 needs ~4.2 GiB
+   RSS and is OOM-killed (exit 137) inside any worker — foreground included.
+   The launcher spawns a one-shot systemd user unit (`iaahoy-podcast.service`)
+   with `MemoryMax=8G`, runs `make_podcast.py` (default engine = `cosy`) there,
+   and waits. Run it as a **background terminal** (it blocks ~30 min) and poll
+   `systemctl --user show iaahoy-podcast.service` / the WAV count in
+   `build/podcast.mp3.build/`; per-run logs: `runs/podcast-*.log`.
+   **Fallback:** if the unit OOMs/fails, retry once with
+   `--engine piper` (same launcher) — Piper fits in the cap and is ~1 min.
+   Produces the single-slot MP3. Old audio is NOT kept — publish.py flattens
+   the git history each day, so only today's MP3 survives.
 5. **Render** (deterministic) — for the latest edition only (publish re-renders
    everything, but this verifies early):
    `python3 scripts/render.py --json editions/<TODAY>.json --css templates/style.css --podcast podcast.mp3 --out build/site/editions/<TODAY>.html`
@@ -183,7 +192,12 @@ lead to the single most important item of the day.
 
 ## Pitfalls (learned)
 - `render.py` flags: `--json <edition.json> --css <style.css> --podcast <rel.mp3> --out <html>`; for the archive it's `--list-editions <editions_dir>` (not `--json`). `--podcast` is the RELATIVE path as it should appear in that page.
-- `make_podcast.py` is called from `~/.hermes/skills/espanish-podcast/scripts/` (the canonical copy); flags: `--script <podcast.txt> --out <podcast.mp3>` (optionally `--voice-a`/`--voice-c`). Voice details, English-IPA mechanics and TTS pitfalls are documented in the `espanish-podcast` skill — keep that boundary, don't re-document TTS here.
+- **CosyVoice3 inside any Hermes worker = OOM 137 (learned the hard way):** the
+  worker cgroup cap is 4 GiB and the model needs ~4.2 GiB RSS; `OMP_NUM_THREADS`
+  does NOT help (it's the model weights, not thread stacks). ALWAYS run
+  CosyVoice synthesis through `podcast_systemd.sh` (MemoryMax=8G) or foreground
+  from the gateway scope. A background/foreground `terminal` call both die.
+- `make_podcast.py` canonical copy lives in `~/.hermes/skills/espanish-podcast/scripts/` (project copy is kept in sync); flags: `--script <podcast.txt> --out <podcast.mp3> --engine {cosy,piper}` (default `cosy`, `--only S E`, `--assemble`, `--clean`). Voice details, CosyVoice worker protocol, emotion instructions and TTS pitfalls are documented in the `espanish-podcast` skill — keep that boundary, don't re-document TTS here.
 - English-IPA mechanism (do NOT "fix" it): piper's `[[…]]` blocks are split **char-by-char** (`voice.py`: `extend(text_part[2:-2].strip())`) and each char is looked up in the model's phoneme id-map, unknowns skipped silently. piper's own `;en` inline switch does NOT work (phonemize_espeak strips (lang) flags, L40) — the working path is pre-phonemizing the term with espeakbridge (`EspeakPhonemizer()` to init, then `set_voice("en-us")`, `get_phonemes(term)`) and wrapping the IPA in `[[…]]`. espeakbridge without prior init segfaults.
 - The archive page lives in `editions/`, so its podcast link MUST be `../podcast.mp3` (publish.py already does this); if you ever hand-render the archive, use `../podcast.mp3`.
 - HF blog HTML is JS-rendered → use RSS `desc` (often empty) + `web_search` to ground the lead story, not raw HTML scrape.
