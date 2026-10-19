@@ -1,7 +1,7 @@
 ---
 name: iaahoy-daily-edition
 description: "iaahoy: produce + publish daily Spanish open-AI newspaper."
-version: 2.2.0
+version: 2.4.0
 author: jgbarah
 license: MIT
 platforms: [linux]
@@ -9,17 +9,19 @@ metadata:
   hermes:
     tags: [iaahoy, daily-newspaper, github-pages, open-ai, spanish, cron, podcast]
     requires_skills: [espanish-podcast]
-    related_skills: [news-digest, github-repo-management]
+    related_skills: [news-digest, github-repo-management, hyperqwen-gpu-swap, espanish-podcast]
 ---
 
 # ia·ahoy — daily open-AI newspaper + podcast (Spanish)
 
-**Depends on the `espanish-podcast` skill** (hard requirement for step 4):
-it owns the two-voice Piper TTS pipeline, the script format and the
-English-term pronunciation rules. Install it first:
-`hermes skills install github.com/jgbarahbot/espanish-podcast` — step 4 calls
-`~/.hermes/skills/espanish-podcast/scripts/make_podcast.py`, so it fails if
-that path is missing.
+**Podcast synthesis runs on the GPU** (step 4) via the `hyperqwen-gpu-swap`
+skill: a detached systemd user job stops the HyperQwen vLLM container,
+synthesizes the script with CosyVoice3 in fp16 on the RTX 3090
+(`cosyvoice:gpu` container) and restarts vLLM. The script format, the
+English-term pronunciation rules and the CPU fallback
+(`espanish-podcast` skill, `make_podcast.py`) stay as documented there.
+Install the podcast skill first (it is the fallback):
+`hermes skills install github.com/jgbarahbot/espanish-podcast`.
 
 Static-HTML "newspaper" about open-weights models + open-source AI software,
 published daily to GitHub Pages: **https://jgbarahbot.github.io/iaahoy**,
@@ -36,8 +38,11 @@ Title: **"IA Abierta Hoy"** (short form: **IA*A*Hoy**).
 - Project: `~/.hermes/projects/iaahoy/`
   - `scripts/collector.py`   — gathers raw material → `material.json`
   - `scripts/render.py`      — edition JSON → standalone HTML (CSS inlined)
-  - (podcast audio is NOT synthesized here — the `espanish-podcast` skill owns
-                                `make_podcast.py`, see step 4)
+  - (podcast audio is synthesized in step 4: GPU path via
+                                `scripts/podcast_gpu.py` + `gpu_worker.py` in
+                                the `cosyvoice:gpu` container, or the CPU
+                                `make_podcast.py` fallback from
+                                `espanish-podcast`)
   - `scripts/publish.py`     — re-render all editions, copy podcast, FLATTEN
                                 git history (orphan + force-push) to GitHub
   - `templates/style.css`    — broadsheet CSS (render.py inlines it)
@@ -70,16 +75,32 @@ var name, never type the literal word in code strings.
   `es_MX-claude-high`, both 22050 Hz, user-fixed pair "usa solo a y c"),
   English-term pronunciation (dictionary + numbers-in-Spanish + espeak IPA
   fallback) and all TTS requirements/pitfalls. This skill only WRITES the
-  script and calls the other skill's `make_podcast.py`. After a podcast run,
-  relay any `UNSURE: <term>` lines the script prints to the user (they are
+  script; synthesis runs in step 4 (GPU by default, `espanish-podcast`'s
+  `make_podcast.py` as fallback). After a podcast run, relay any
+  `UNSURE: <term>` lines the script prints to the user (they are
   pronunciation candidates for `pron_dict.json`).
 
-## The 6-step pipeline (run in order)
+## The 5-step pipeline (run in order)
 
 Steps 3–4 split the podcast work: THIS skill writes the script (step 3, LLM);
-the `espanish-podcast` skill synthesizes the audio (step 4, delegated).
-Load `espanish-podcast` before the first run of the day:
-`skill_view(name="espanish-podcast").`
+step 4 synthesizes it with the `hyperqwen-gpu-swap` skill (GPU, CosyVoice3
+fp16 — see that skill for the swap mechanism) and falls back to the
+`espanish-podcast` skill's `make_podcast.py` (CPU). Load
+`hyperqwen-gpu-swap` (and `espanish-podcast` for the fallback) before the
+first run of the day.
+0. **PRE-FLIGHT: vLLM health (obligatorio, antes de todo).** Todo el
+   pipeline (pasos 1-3) corre sobre el vLLM de HyperQwen
+   (127.0.0.1:8081). Si esta caido o en zombi (contenedor `Up` pero
+   `/v1/models` no responde — incidente 2026-10-19: zombi de 06:43 a
+   08:40; el cron de 08:30 fallo en silencio y se perdio la edicion del
+   dia), el cron entero fallara sin producir nada. Comprobar:
+   `curl -s -m 5 http://127.0.0.1:8081/v1/models | grep qwen3.8-27b`.
+   Si no responde: `bash /home/jgb/hyperqwen/hyperqwen_on.sh` — es
+   idempotente (no toca nada si ya sirve), en zombi fuerza
+   stop+start, espera un chat/completions real, y esta serializado con
+   flock (dos recuperaciones no compiten; si no toma el lock a tiempo,
+   cede al otro). Esperar a que termine (hasta ~20 min), re-comprobar y
+   solo entonces continuar con el pipeline.
 1. **Collect** (deterministic, ~1 min):
    `cd ~/.hermes/projects/iaahoy && python3 scripts/collector.py --out material.json --days 2`
    Sources: HF trending models/datasets, HF daily papers, HF blog RSS, GitHub
@@ -113,44 +134,74 @@ Load `espanish-podcast` before the first run of the day:
    **Do NOT mention the number of voices or narrator identity in the script —
    just use the voices naturally.** Don't overdo asterisks: only mark genuine
    English terms, not Spanish words.
-4. **Podcast audio — DELEGATE to the `espanish-podcast` skill, via the
-   systemd launcher (CosyVoice3, CPU)** (deterministic, ~25–35 min):
-   `bash ~/.hermes/projects/iaahoy/scripts/podcast_systemd.sh --script ~/.hermes/projects/iaahoy/editions/<TODAY>.podcast.txt --out ~/.hermes/projects/iaahoy/build/podcast.mp3`
-   **Why the launcher:** Hermes worker cgroups are hard-capped at 4 GiB
-   (`process_registry._WORKER_MEMORY_MAX_CAP_BYTES`); CosyVoice3 needs ~4.2 GiB
-   RSS and is OOM-killed (exit 137) inside any worker — foreground included.
-   The launcher spawns a one-shot systemd user unit (`iaahoy-podcast.service`)
-   with `MemoryMax=8G`, runs `make_podcast.py` (default engine = `cosy`) there,
-   and waits. Run it as a **background terminal** (it blocks ~30 min) and poll
-   `systemctl --user show iaahoy-podcast.service` / the WAV count in
-   `build/podcast.mp3.build/`; per-run logs: `runs/podcast-*.log`.
-   **Fallback:** if the unit OOMs/fails, retry once with
-   `--engine piper` (same launcher) — Piper fits in the cap and is ~1 min.
-   Produces the single-slot MP3. Old audio is NOT kept — publish.py flattens
-   the git history each day, so only today's MP3 survives.
-5. **Render** (deterministic) — for the latest edition only (publish re-renders
-   everything, but this verifies early):
-   `python3 scripts/render.py --json editions/<TODAY>.json --css templates/style.css --podcast podcast.mp3 --out build/site/editions/<TODAY>.html`
-   Verifies ≥1 link per note; fails loudly on placeholders/`TODO`/`lorem`.
-6. **Publish** (deterministic, self-healing, history-flattening):
-   `python3 scripts/publish.py`
-   Re-renders EVERY `editions/*.json` (root `index.html` = latest, per-edition
-   permlinks, `editions/index.html` archive), copies `build/podcast.mp3` into the
-   site root, creates a fresh **orphan** commit, and **force-pushes** main. This
-   is what guarantees no old audios linger. `--no-push` does everything except
-   the push (use to dry-run). It re-clones `git/` if corrupted; refuses to push
-   an empty tree.
+4. **Podcast audio — GPU swap: CosyVoice3 on the GPU (fp16), then render +
+   publish inside the same swap** (deterministic, ~3–4 min total, ~35× faster
+   than the CPU path):
+   `systemd-run --user --unit=gpu-swap-iaahoy-podcast --property=TimeoutStartSec=0 --property=KillMode=process bash ~/.hermes/gpu-swaps/iaahoy-podcast-gpu-swap.sh /home/jgb/.hermes/projects/iaahoy/editions/<TODAY>.podcast.txt /home/jgb/.hermes/projects/iaahoy/build/podcast.mp3`
+   **REGLA DURO — SOLO via systemd-run (incidente 2026-10-19 01:21:
+   vLLM caido ~7 h, edicion perdida):** NUNCA lanzar el wrapper como
+   hijo de una llamada `terminal`/`execute_code` del agente: esas
+   llamadas tienen un timeout duro que, al llegar, manda SIGKILL al
+   arbol de procesos — SIGKILL no se puede atrapar, asi que el
+   `trap cleanup` del wrapper (el que haria el ON) NUNCA corrio y el
+   modelo no volvio hasta que el usuario dio el reboot. `systemd-run
+   --user` desacopla el job del arbol de procesos y grupo de procesos
+   del agente: sobrevive a la muerte del agente (que durante el OFF
+   pierde su LLM de todos modos). Para una prueba que no toque el
+   sitio, anadir `--no-publish` como 3er arg (el target solo
+   sintetiza el MP3; el sitio y el git no se mueven).
+   **What it does** (see the `hyperqwen-gpu-swap` skill for the mechanism):
+   1. ~20 s margin, then **OFF**: stops the HyperQwen vLLM container
+      (frees the ~22.5 GB VRAM on the single RTX 3090).
+   2. **TARGET**: `iaahoy-podcast-gpu-target.sh` — starts the
+      `cosyvoice:gpu` container (conditional driver-lib mounts, 5
+      `--device` nodes), copies in `gpu_worker.py` (source of truth:
+      `~/.hermes/cache/cosyvoice/docker-build/gpu_worker.py`),
+      `podcast_gpu.py` (project scripts/), the day's script and the
+      `pron_dict.json`; runs `podcast_gpu.py` inside it: parses the
+      two-voice script, synthesizes every block with CosyVoice3 in **fp16
+      on the GPU** (RTF ~0.5, ~2–3 s per block), assembles the MP3 with
+      ffmpeg. Then, still inside the target (the agent is dead during the
+      OFF, so the deterministic tail must run here): `publish.py`
+      re-renders every edition, copies the MP3 to the site root, and
+      force-pushes the flattened history.
+   3. **ON**: restarts the vLLM container and waits until the
+      `/health` endpoint answers (agent is usable again).
+   **Emotion instructions are English-only and short** ("Speak in a
+   … tone." / "Talk …" patterns) — CosyVoice3's `instruct2` is
+   English-tuned; long or Spanish instructions leak into the audio. The
+   `INSTRUCT` dict in `gpu_worker.py` maps the Spanish emotion tags of the
+   script (alegre, solemne, …) to those English phrases; keep it that way
+   when you change it.
+   **You MUST end your turn right after launching the swap**: you lose
+   your LLM in the OFF phase; the systemd job is detached (the agent can
+   die, the chain finishes and vLLM comes back). When you're alive again
+   (a later user message or your scheduled turn), verify in **step 5**.
+   **Fallback (no GPU available / swap fails twice):** the old CPU path —
+   `bash ~/.hermes/projects/iaahoy/scripts/podcast_systemd.sh --script … --out …`
+   (CosyVoice3 CPU via `make_podcast.py`, ~25–35 min; then run
+   `scripts/render.py` and `scripts/publish.py` from the project dir manually).
+   Only if that also OOMs, `--engine piper`.
+5. **VERIFY the published site** (run after the swap completes, i.e. in a
+   later turn when vLLM is back — do not trust the swap's exit code alone).
+   The swap already did render+publish inside the target, so this is
+   check-only:
+   - `curl -s -o /dev/null -w '%{http_code} %{size_download}\n' https://jgbarahbot.github.io/iaahoy/` → 200.
+   - Pages first build takes ~30–60 s after a push; poll once if it 404s.
+   - `curl -s -o /dev/null -w '%{http_code}\n' https://jgbarahbot.github.io/iaahoy/podcast.mp3` → 200
+     (the MP3 is today's — confirm size > ~200 KB and that
+     `~/.hermes/projects/iaahoy/build/podcast.mp3` is fresh).
+   - Swap log with the full run: `~/.hermes/gpu-swaps/iaahoy-podcast-gpu-swap.log`
+     (look for `PODCAST OK` and `PUBLISH OK`; a `FALLO publish` line means the
+     MP3 exists but the push failed → run `python3 scripts/publish.py` from the
+     project dir once vLLM is back).
+   - Every page's `<audio src=...>` must resolve to `/podcast.mp3`: root uses
+     `podcast.mp3`, the permlink and archive use `../podcast.mp3` (they live
+     in `editions/`). Check the rendered HTML carries the right relative
+     path; the permlink `curl -s <permalink>` should 200.
+   - Report the live URL + edition date to the user in Spanish (or their
+     language), 2–4 lines: portada headline, 2–3 highlights, and the URL.
 
-## After publishing — VERIFY (do not trust exit 0 alone)
-- `curl -s -o /dev/null -w '%{http_code} %{size_download}\n' https://jgbarahbot.github.io/iaahoy/` → 200.
-- Pages first build takes ~30–60s after a push; poll once if it 404s.
-- `curl -s -o /dev/null -w '%{http_code}\n' https://jgbarahbot.github.io/iaahoy/podcast.mp3` → 200.
-- Every page's `<audio src=...>` must resolve to `/podcast.mp3`: root uses
-  `podcast.mp3`, the permlink and archive use `../podcast.mp3` (they live in
-  `editions/`). Check the rendered HTML carries the right relative path.
-- `curl -s <permalink>` should 200. Compare bytes vs local `build/site/index.html`.
-- Report the live URL + edition date to the user in Spanish (or their language),
-  2–4 lines: portada headline, 2–3 highlights, and the live URL.
 
 ## Edition JSON schema (what render.py expects)
 ```
@@ -192,6 +243,8 @@ lead to the single most important item of the day.
 
 ## Pitfalls (learned)
 - `render.py` flags: `--json <edition.json> --css <style.css> --podcast <rel.mp3> --out <html>`; for the archive it's `--list-editions <editions_dir>` (not `--json`). `--podcast` is the RELATIVE path as it should appear in that page.
+- **`podcast_systemd.sh` needs ABSOLUTE `--script`/`--out` paths (learned 2026-10-14):** the one-shot systemd unit's CWD is NOT the project dir, so relative `editions/…` paths die instantly with `FileNotFoundError` (exit 1 in ~30 ms, 300 KB mem — NOT an OOM). Always pass `~/.hermes/projects/iaahoy/editions/<TODAY>.podcast.txt` and `~/.hermes/projects/iaahoy/build/podcast.mp3`. To see the REAL error (the launcher's `runs/podcast-*.log` only holds `systemd-run --wait`'s status), use `journalctl --user -u iaahoy-podcast.service --no-pager -n 40`.
+- **CosyVoice venv `bin/python` symlinks can be stripped:** if the unit fails in ~30 ms, check `~/.hermes/venvs/cosyvoice/bin/python` — if the `python`/`python3`/`python3.11` symlinks are gone, restore them to the base from `pyvenv.cfg` (`executable =`), e.g. `ln -sf <base> bin/python3.11 && ln -sf python3.11 bin/python3 && ln -sf python3.11 bin/python`.
 - **CosyVoice3 inside any Hermes worker = OOM 137 (learned the hard way):** the
   worker cgroup cap is 4 GiB and the model needs ~4.2 GiB RSS; `OMP_NUM_THREADS`
   does NOT help (it's the model weights, not thread stacks). ALWAYS run
@@ -207,6 +260,8 @@ lead to the single most important item of the day.
 - If the day's news is thin (weekend), still publish — reuse trending models/repos with fresh framing; never skip a day.
 - Redaction layer: never type the literal word for the secret (lowercase) in tool-call strings — it gets rewritten; use the env var name or `chr()` construction in code.
 
+- **Nunca el wrapper del swap en foreground de una llamada a tool del agente** (2026-10-19 01:21): el timeout de la llamada lo mato con SIGKILL (no atrapable) antes de que el trap hiciese el ON; vLLM quedo caido 01:21-08:40 (hasta el reboot del usuario), el cron de 08:30 fallo en silencio y se perdio la edicion del dia. El wrapper solo se lanza con `systemd-run --user` (step 4), y el cron empieza con el pre-flight de salud de vLLM (step 0).
+- **Un `podman start hyperqwen` a secas (sin `hyperqwen_on.sh`) puede dejar un zombi** (contenedor Up, modelo no sirve; sin crash en systemd que lo detecte). Si vLLM no responde, usar siempre `hyperqwen_on.sh` (rama zombie + check de chat/completions + flock), nunca un `podman start` directo.
 ## Cron
 The daily 08:30 job (08:30 CEST) fires this exact flow. When you run it, your
 FINAL RESPONSE is delivered to the user — write a 2–4 line Spanish summary:
