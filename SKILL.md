@@ -185,6 +185,14 @@ first run of the day.
    `INSTRUCT` dict, but raw English is the preferred, unambiguous form.
    Use sparingly: openings/closings and at most one dramatic beat; a
    news digest is mostly neutral.
+   **Acento inglés en un bloque = fp16, no el guion (2026-10-19):** el blk_06 de la
+   edición 10-18 salió con acento inglés (F0 mediana 214 Hz, derivando a ~272; refs C: 182-195):
+   `gpu_worker.py` corría fp16 en el contenedor y fp16 deriva el F0 en bloques largos (>~20 s).
+   fp32 (worker CPU, mismo código) dio el texto idéntico limpio → producción ahora es fp32:
+   `podcast_gpu.py` hereda `COSYVOICE_FP16` del env (default "0") y el target exporta
+   `COSYVOICE_FP16=0`. Prueba rápida de deriva: F0 por bloque (wavs en `build/wavs/wavs/`,
+   doble anidado) — C en 182-195, A en ~100; >200 = deriva.: openings/closings and at most one dramatic beat; a
+   news digest is mostly neutral.
    **You MUST end your turn right after launching the swap**: you lose
    your LLM in the OFF phase; the systemd job is detached (the agent can
    die, the chain finishes and vLLM comes back). When you're alive again
