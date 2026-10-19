@@ -16,8 +16,11 @@ metadata:
 
 **Podcast synthesis runs on the GPU** (step 4) via the `hyperqwen-gpu-swap`
 skill: a detached systemd user job stops the HyperQwen vLLM container,
-synthesizes the script with CosyVoice3 in fp16 on the RTX 3090
-(`cosyvoice:gpu` container) and restarts vLLM. The script format, the
+synthesizes the script with CosyVoice3 in fp32 on the RTX 3090
+(`cosyvoice:gpu` container) and restarts vLLM. (fp32 since 2026-10-19:
+fp16 accumulated rounding error in long autoregressive blocks, drifting F0
+upward and turning Spanish into English-accented speech — user-identified.)
+The script format, the
 English-term pronunciation rules and the CPU fallback
 (`espanish-podcast` skill, `make_podcast.py`) stay as documented there.
 Install the podcast skill first (it is the fallback):
@@ -84,7 +87,7 @@ var name, never type the literal word in code strings.
 
 Steps 3–4 split the podcast work: THIS skill writes the script (step 3, LLM);
 step 4 synthesizes it with the `hyperqwen-gpu-swap` skill (GPU, CosyVoice3
-fp16 — see that skill for the swap mechanism) and falls back to the
+fp32 — see that skill for the swap mechanism) and falls back to the
 `espanish-podcast` skill's `make_podcast.py` (CPU). Load
 `hyperqwen-gpu-swap` (and `espanish-podcast` for the fallback) before the
 first run of the day.
@@ -137,7 +140,7 @@ first run of the day.
    instruction in the marker tag of the few blocks that need it
    (`A [Speak cheerfully and loud]: ...`), all other blocks plain `A:`/`C:`
    (neutral). Never write Spanish words in the tags.
-4. **Podcast audio — GPU swap: CosyVoice3 on the GPU (fp16), then render +
+4. **Podcast audio — GPU swap: CosyVoice3 on the GPU (fp32), then render +
    publish inside the same swap** (deterministic, ~3–4 min total, ~35× faster
    than the CPU path):
    `systemd-run --user --unit=gpu-swap-iaahoy-podcast --property=TimeoutStartSec=0 --property=KillMode=process bash ~/.hermes/gpu-swaps/iaahoy-podcast-gpu-swap.sh /home/jgb/.hermes/projects/iaahoy/editions/<TODAY>.podcast.txt /home/jgb/.hermes/projects/iaahoy/build/podcast.mp3`
@@ -162,9 +165,11 @@ first run of the day.
       `~/.hermes/cache/cosyvoice/docker-build/gpu_worker.py`),
       `podcast_gpu.py` (project scripts/), the day's script and the
       `pron_dict.json`; runs `podcast_gpu.py` inside it: parses the
-      two-voice script, synthesizes every block with CosyVoice3 in **fp16
-      on the GPU** (RTF ~0.5, ~2–3 s per block), assembles the MP3 with
-      ffmpeg. Then, still inside the target (the agent is dead during the
+      two-voice script, synthesizes every block with CosyVoice3 in **fp32
+       on the GPU** (RTF ~0.5, ~2–3 s per block; fp32 is the production
+       default — fp16 drifted F0 into English accent on long blocks;
+       `COSYVOICE_FP16=1` in the env forces fp16 for experiments),
+       assembles the MP3 with ffmpeg. Then, still inside the target (the agent is dead during the
       OFF, so the deterministic tail must run here): `publish.py`
       re-renders every edition, copies the MP3 to the site root, and
       force-pushes the flattened history.
