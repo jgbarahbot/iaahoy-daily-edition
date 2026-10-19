@@ -1,7 +1,7 @@
 ---
 name: iaahoy-daily-edition
 description: "iaahoy: produce + publish daily Spanish open-AI newspaper."
-version: 2.4.0
+version: 2.5.0
 author: jgbarah
 license: MIT
 platforms: [linux]
@@ -133,7 +133,10 @@ first run of the day.
    sign-off; target ~3–5 minutes when spoken (~18 blocks, 9 per voice).
    **Do NOT mention the number of voices or narrator identity in the script —
    just use the voices naturally.** Don't overdo asterisks: only mark genuine
-   English terms, not Spanish words.
+   English terms, not Spanish words. For emotion: put the English
+   instruction in the marker tag of the few blocks that need it
+   (`A [Speak cheerfully and loud]: ...`), all other blocks plain `A:`/`C:`
+   (neutral). Never write Spanish words in the tags.
 4. **Podcast audio — GPU swap: CosyVoice3 on the GPU (fp16), then render +
    publish inside the same swap** (deterministic, ~3–4 min total, ~35× faster
    than the CPU path):
@@ -168,11 +171,15 @@ first run of the day.
    3. **ON**: restarts the vLLM container and waits until the
       `/health` endpoint answers (agent is usable again).
    **Emotion instructions are English-only and short** ("Speak in a
-   … tone." / "Talk …" patterns) — CosyVoice3's `instruct2` is
-   English-tuned; long or Spanish instructions leak into the audio. The
-   `INSTRUCT` dict in `gpu_worker.py` maps the Spanish emotion tags of the
-   script (alegre, solemne, …) to those English phrases; keep it that way
-   when you change it.
+   … tone." / "Talk …" patterns, e.g. "Speak cheerfully and loud") —
+   CosyVoice3's `instruct2` is English-tuned; long or Spanish
+   instructions leak into the audio. Write the English instruction
+   DIRECTLY in the script tag: `A [Speak cheerfully and loud]: ...` —
+   the worker's `resolve_instruct()` passes it through verbatim. Spanish
+   keys (alegre, cierre, …) still work as an indirection into the
+   `INSTRUCT` dict, but raw English is the preferred, unambiguous form.
+   Use sparingly: openings/closings and at most one dramatic beat; a
+   news digest is mostly neutral.
    **You MUST end your turn right after launching the swap**: you lose
    your LLM in the OFF phase; the systemd job is detached (the agent can
    die, the chain finishes and vLLM comes back). When you're alive again
