@@ -1,7 +1,7 @@
 ---
 name: iaahoy-daily-edition
 description: "iaahoy: produce + publish daily Spanish open-AI newspaper."
-version: 2.5.0
+version: 2.18.0
 author: jgbarah
 license: MIT
 platforms: [linux]
@@ -140,9 +140,12 @@ first run of the day.
    instruction in the marker tag of the few blocks that need it
    (`A [Speak cheerfully and loud]: ...`), all other blocks plain `A:`/`C:`
    (neutral). Never write Spanish words in the tags.
-4. **Podcast audio — GPU swap: CosyVoice3 on the GPU (fp32), then render +
-   publish inside the same swap** (deterministic, ~3–4 min total, ~35× faster
-   than the CPU path):
+4. **Podcast audio — GPU swap, then render + publish inside the same swap.**
+   **Default engine: CosyVoice3 (fp32, per-block emotion).** Alternative
+   engine (no emotion, same two cloned voices): Qwen3-TTS 1.7B-Base (bf16 +
+   SDPA) — see "Qwen3-TTS alternative" below. Both run as a detached
+   `systemd-run --user` job that stops vLLM, synthesizes on the GPU, and
+   restarts vLLM (~3–4 min total, ~35× faster than the CPU path):
    `systemd-run --user --unit=gpu-swap-iaahoy-podcast --property=TimeoutStartSec=0 --property=KillMode=process bash ~/.hermes/gpu-swaps/iaahoy-podcast-gpu-swap.sh /home/jgb/.hermes/projects/iaahoy/editions/<TODAY>.podcast.txt /home/jgb/.hermes/projects/iaahoy/build/podcast.mp3`
    **REGLA DURO — SOLO via systemd-run (incidente 2026-10-19 01:21:
    vLLM caido ~7 h, edicion perdida):** NUNCA lanzar el wrapper como
@@ -185,6 +188,19 @@ first run of the day.
    `INSTRUCT` dict, but raw English is the preferred, unambiguous form.
    Use sparingly: openings/closings and at most one dramatic beat; a
    news digest is mostly neutral.
+   **Qwen3-TTS alternative (no emotion, same two cloned voices, 2026-10-21):**
+   if the episode does not need per-block emotion, run the same detached
+   `systemd-run --user` flow with the Qwen3-TTS scripts instead (the
+   `--no-publish` third arg works the same way):
+   `systemd-run --user --unit=gpu-swap-qwen3-podcast --property=TimeoutStartSec=0 --property=KillMode=process bash ~/.hermes/gpu-swaps/qwen3-podcast-gpu-swap.sh /home/jgb/.hermes/projects/iaahoy/editions/<TODAY>.podcast.txt /home/jgb/.hermes/projects/iaahoy/build/podcast.mp3 [--no-publish]`
+   It starts the `qwen3-tts:local` container (bf16 + SDPA, Qwen3-TTS-12Hz-
+   1.7B-Base, ~3-4 s/block), runs `qwen3_podcast.py` (same script format,
+   emotion tags ignored, numbers in Spanish, English terms read natively),
+   assembles the MP3 and then render+publish exactly like the CosyVoice
+   target. Model + refs live in `~/.hermes/cache/qwen3-tts/`; the worker is
+   `qwen3_worker.py` in the `espanish-podcast` skill (source of truth). Same
+   hard rules: only via `systemd-run`, end your turn right after launching,
+   verify in step 5.
    **Acento inglés en un bloque = fp16, no el guion (2026-10-19):** el blk_06 de la
    edición 10-18 salió con acento inglés (F0 mediana 214 Hz, derivando a ~272; refs C: 182-195):
    `gpu_worker.py` corría fp16 en el contenedor y fp16 deriva el F0 en bloques largos (>~20 s).
@@ -287,6 +303,19 @@ lead to the single most important item of the day.
 The daily 08:30 job (08:30 CEST) fires this exact flow. When you run it, your
 FINAL RESPONSE is delivered to the user — write a 2–4 line Spanish summary:
 edition date, the portada headline, 2–3 other highlights, and the live URL.
+
+**The swap is the ONLY publish path — never run `publish.py` by itself before
+the MP3 exists.** The job's cron prompt used to list "5 steps"
+(collect → curate → render → `publish.py` → verify) with the podcast-swap
+step only implicit, so on 2026-10-23 the agent read it as "just those 5 steps",
+ran `publish.py` without synthesizing anything, and shipped TODAY's HTML with
+YESTERDAY's MP3 (the site's single `podcast.mp3` slot still held the 10-22
+audio). The prompt now states the binding order explicitly (write the
+`.podcast.txt`, launch the detached GPU swap — which renders AND publishes —
+END your turn; verify in a later turn). If you are ever handed a "5-step"
+prompt again that says "publish" but never mentions the swap, STOP: that is
+the 2026-10-23 shape and publishing there repeats the bug — run the swap
+first, publish only via it.
 
 ## Keeping this skill in sync with GitHub
 This directory is a git repo tracking `jgbarahbot/iaahoy-daily-edition`. After any local edit, run `./sync.sh` (commits, fast-forwards, and pushes using `GITHUB_CONTENT_RW_TOKEN` from `~/.hermes/.env`).
