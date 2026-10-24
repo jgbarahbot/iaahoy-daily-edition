@@ -34,6 +34,30 @@ def esc(s):
     return html.escape(str(s), quote=True)
 
 
+# Two-pass Spanish convention: pass 1 writes pure Spanish (everything
+# reasonably translated), pass 2 marks only the terms that STAY in English
+# with *asterisks*. On the web those markers render as <em>term</em> (italic,
+# styled as a foreign term) instead of literal asterisks. The podcast script
+# keeps the raw asterisks — they are the TTS cue to read a term in English.
+_EM_RE = re.compile(r"(\*[^*\n]+\*)")
+
+
+def esc_em(s):
+    """HTML-escape a string, converting *term* markers to <em>term</em>.
+
+    Used for note/lead titles, summaries and body paragraphs, which carry the
+    two-pass English-term markers. An unpaired lone '*' never matches, so
+    plain text with a single asterisk passes through escaped and untouched.
+    """
+    out = []
+    for p in _EM_RE.split(str(s)):
+        if len(p) >= 2 and p.startswith("*") and p.endswith("*"):
+            out.append("<em>%s</em>" % html.escape(p[1:-1], quote=True))
+        else:
+            out.append(html.escape(p, quote=True))
+    return "".join(out)
+
+
 def render_chips(links, tags, source):
     out = []
     for lk in links or []:
@@ -50,13 +74,13 @@ def render_chips(links, tags, source):
 def render_lead(lead, base):
     if not lead:
         return ""
-    title = esc(lead.get("title", ""))
+    title = esc_em(lead.get("title", ""))
     url = esc((lead.get("links") or [{}])[0].get("url", "#"))
-    body = "".join("<p%s>%s</p>" % (' class="dropcap"' if i == 0 else "", esc(p)) for i, p in enumerate(lead.get("body", [])))
+    body = "".join("<p%s>%s</p>" % (' class="dropcap"' if i == 0 else "", esc_em(p)) for i, p in enumerate(lead.get("body", [])))
     h = '<div class="featured">'
     h += '<p class="kicker">%s</p>' % esc(lead.get("kicker", "Portada"))
     h += '<h2><a href="%s" style="color:inherit;text-decoration:none" rel="noopener">%s</a></h2>' % (url, title)
-    h += '<p class="lead">%s</p>' % esc(lead.get("summary", ""))
+    h += '<p class="lead">%s</p>' % esc_em(lead.get("summary", ""))
     h += '<div class="fbody">%s</div>' % body
     h += render_chips(lead.get("links"), lead.get("tags"), lead.get("source"))
     h += "</div>"
@@ -67,10 +91,21 @@ def render_note(note):
     links = note.get("links") or []
     url = links[0]["url"] if links else "#"
     spec = '<p class="spec">%s</p>' % esc(note.get("spec", "")) if note.get("spec") else ""
-    body = "".join("<p>%s</p>" % esc(p) for p in note.get("body", []))
+    # Two-pass layout: a single-paragraph `summary` (the recap) renders first,
+    # then the `body` list of flowing paragraphs. When there is no `body` the
+    # summary stands alone as the note body (backward-compatible). The
+    # *asterisks* marking English terms become <em> via esc_em.
+    summary = note.get("summary")
+    body_paras = note.get("body")
+    if body_paras:
+        resumen = '<p class="resumen">%s</p>' % esc_em(summary) if summary else ""
+        body = "".join("<p>%s</p>" % esc_em(p) for p in body_paras)
+    else:
+        resumen = ""
+        body = '<p>%s</p>' % esc_em(summary) if summary else ""
     h = '<article class="note">'
-    h += '<h4><a href="%s" rel="noopener">%s</a></h4>' % (esc(url), esc(note.get("title", "")))
-    h += spec + body
+    h += '<h4><a href="%s" rel="noopener">%s</a></h4>' % (esc(url), esc_em(note.get("title", "")))
+    h += spec + resumen + body
     h += render_chips(links, note.get("tags"), note.get("source"))
     h += "</article>"
     return h
@@ -163,7 +198,7 @@ def _linkify_repo(s):
     m = re.search(r"https?://github\.com/[\w.-]+/[\w.-]+?(?=[\s)\]]|$)", s)
     if not m:
         return esc(s)
-    url = m.group(0).rstrip(")\]")
+    url = m.group(0).rstrip(")]")
     return (esc(s[:m.start()])
             + '<a href="%s" rel="noopener">%s</a>' % (esc(url), esc(url))
             + esc(s[m.end():]))
@@ -228,7 +263,7 @@ def build_page(ed, css, podcast_url, base):
         "<!doctype html>",
         '<html lang="es"><head><meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width,initial-scale=1">',
-        "<title>IA Abierta Hoy (ia·ahoy) — %s</title>" % esc(ed.get("date", "")),
+        "<title>IA·A·Hoy — %s</title>" % esc(ed.get("date", "")),
         '<meta name="description" content="Edición diaria de IA Abierta Hoy: pesos abiertos, kernels, agentes y self-hosting. %s">' % esc(ed.get("edition", "")),
         '<link rel="alternate" type="application/json" href="%seditions/%s">' % ("../" if base == "editions" else "", esc(ed.get("_file", ""))),
         "<style>" + css + "</style></head><body>",
@@ -260,7 +295,7 @@ def build_editions_index(editions, css, podcast_url):
         items.append(li)
     h = '<!doctype html><html lang="es"><head><meta charset="utf-8">'
     h += '<meta name="viewport" content="width=device-width,initial-scale=1">'
-    h += "<title>IA Abierta Hoy (ia·ahoy) — Archivo</title>"
+    h += "<title>IA·A·Hoy — Archivo</title>"
     h += "<style>" + css + "</style></head><body>"
     h += render_masthead({"edition": "Archivo", "date": "todas las ediciones", "place": "GitHub Pages"}, "editions")
     h += render_podcast_cta(podcast_url)
