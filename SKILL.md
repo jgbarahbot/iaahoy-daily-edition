@@ -1,7 +1,7 @@
 ---
 name: iaahoy-daily-edition
 description: "iaahoy: produce + publish daily Spanish open-AI newspaper."
-version: 2.19.0
+version: 2.20.0
 author: jgbarah
 license: MIT
 platforms: [linux]
@@ -16,14 +16,14 @@ metadata:
 
 **Podcast synthesis runs on the GPU** (step 4) via the `hyperqwen-gpu-swap`
 skill: a detached systemd user job stops the HyperQwen vLLM container,
-synthesizes the script with CosyVoice3 in fp32 on the RTX 3090
-(`cosyvoice:gpu` container) and restarts vLLM. (fp32 since 2026-10-19:
-fp16 accumulated rounding error in long autoregressive blocks, drifting F0
-upward and turning Spanish into English-accented speech — user-identified.)
-The script format, the
-English-term pronunciation rules and the CPU fallback
-(`espanish-podcast` skill, `make_podcast.py`) stay as documented there.
-Install the podcast skill first (it is the fallback):
+synthesizes the script on the RTX 3090 and restarts vLLM. The **voice
+engine is owned by the `espanish-podcast` skill** — this skill only writes
+the script and launches the swap. The current default engine is Qwen3-TTS
+1.7B-Base voice-clone (two cloned narrators, no per-block emotion); the
+alternative engines (CosyVoice3 with emotion instruct, Qwen3-TTS
+VoiceDesign synthetic) are selectable via `--engine` in
+`make_podcast.py` — see the espanish-podcast skill for details.
+Install the podcast skill first (it owns all voice generation):
 `hermes skills install github.com/jgbarahbot/espanish-podcast`.
 
 Static-HTML "newspaper" about open-weights models + open-source AI software,
@@ -45,11 +45,10 @@ Title: **"IA Abierta Hoy"** (short form: **IA*A*Hoy**).
                                 title/summary/body into <em>term</em> (the
                                 two-pass English-term convention); a lone `*`
                                 passes through untouched.
-  - (podcast audio is synthesized in step 4: GPU path via
-                                `scripts/podcast_gpu.py` + `gpu_worker.py` in
-                                the `cosyvoice:gpu` container, or the CPU
-                                `make_podcast.py` fallback from
-                                `espanish-podcast`)
+  - (podcast audio is synthesized in step 4 — DELEGATED to the
+                                `espanish-podcast` skill: it owns the engine,
+                                the GPU worker and the CPU fallback. This
+                                skill never re-documents voice internals here.)
   - `scripts/publish.py`     — re-render all editions, copy podcast, FLATTEN
                                 git history (orphan + force-push) to GitHub
   - `templates/style.css`    — broadsheet CSS (render.py inlines it)
@@ -77,24 +76,24 @@ var name, never type the literal word in code strings.
 - SearXNG (self-hosted, no key): `http://127.0.0.1:8080/search?format=json`.
   Reddit direct API is datacenter-blocked → use SearXNG for subreddit/news.
 - `web_extract` tool is NOT configured — don't rely on it; use `curl` + `web_search`.
-- TTS: DELEGATED to the `espanish-podcast` skill — it owns the script format,
-  the two-voice Piper pipeline (A = `es_ES-davefx-medium`, C =
-  `es_MX-claude-high`, both 22050 Hz, user-fixed pair "usa solo a y c"),
-  English-term pronunciation (dictionary + numbers-in-Spanish + espeak IPA
-  fallback) and all TTS requirements/pitfalls. This skill only WRITES the
-  script; synthesis runs in step 4 (GPU by default, `espanish-podcast`'s
-  `make_podcast.py` as fallback). After a podcast run, relay any
-  `UNSURE: <term>` lines the script prints to the user (they are
-  pronunciation candidates for `pron_dict.json`).
+- TTS: DELEGATED to the `espanish-podcast` skill — it owns the script
+  format, the voice engine and all TTS requirements/pitfalls. Current
+  default: **Qwen3-TTS 1.7B-Base voice-clone** (two cloned narrators A/C,
+  no per-block emotion, 24 kHz); the other engines (CosyVoice3 with
+  emotion instruct, Qwen3-TTS VoiceDesign synthetic) and the Piper fallback
+  are selectable in `make_podcast.py` via `--engine` / `--mode`. This skill
+  only WRITES the script; synthesis runs in step 4 (GPU by default, the
+  `espanish-podcast` skill's `make_podcast.py` as CPU fallback). After a
+  podcast run, relay any `UNSURE: <term>` lines the script prints to the
+  user (they are pronunciation candidates for `pron_dict.json`).
 
 ## The 5-step pipeline (run in order)
 
 Steps 3–4 split the podcast work: THIS skill writes the script (step 3, LLM);
-step 4 synthesizes it with the `hyperqwen-gpu-swap` skill (GPU, CosyVoice3
-fp32 — see that skill for the swap mechanism) and falls back to the
-`espanish-podcast` skill's `make_podcast.py` (CPU). Load
-`hyperqwen-gpu-swap` (and `espanish-podcast` for the fallback) before the
-first run of the day.
+step 4 synthesizes it via the `hyperqwen-gpu-swap` skill (GPU) using the
+`espanish-podcast` skill's engine (default: Qwen3-TTS voice-clone; `--engine`
+selects alternatives — see that skill). Load `hyperqwen-gpu-swap` and
+`espanish-podcast` before the first run of the day.
 0. **PRE-FLIGHT: vLLM health (obligatorio, antes de todo).** Todo el
    pipeline (pasos 1-3) corre sobre el vLLM de HyperQwen
    (127.0.0.1:8081). Si esta caido o en zombi (contenedor `Up` pero
@@ -137,22 +136,33 @@ first run of the day.
    text, blank line between blocks, `*English terms*` marked with asterisks,
    length) live in the `espanish-podcast` skill — **load it**
    (`skill_view(name="espanish-podcast")`) and write the script exactly the
-   way that skill describes. Content: open with the show name ("IA Abierta
+   the way that skill describes. Content: open with the show name ("IA Abierta
    Hoy"), hit the portada, walk through all the sections, close with a short
    sign-off; target ~3–5 minutes when spoken (~18 blocks, 9 per voice).
    **Do NOT mention the number of voices or narrator identity in the script —
    just use the voices naturally.** Don't overdo asterisks: only mark genuine
-   English terms, not Spanish words. For emotion: put the English
-   instruction in the marker tag of the few blocks that need it
-   (`A [Speak cheerfully and loud]: ...`), all other blocks plain `A:`/`C:`
-   (neutral). Never write Spanish words in the tags.
+   English terms, not Spanish words. Emotion markers are OPTIONAL: the default
+   engine (Qwen3-TTS clone) ignores them, and the `qwen-syn` engine reads the
+   Spanish tags (`[alegre]`, `[serio]`, `[cierre]` …) directly — so a marker
+   costs nothing in either case; add one only for a deliberate tonal beat
+   (opening/closing or a single dramatic note), keep most blocks plain
+   `A:`/`C:`. For CosyVoice (`--engine cosy`) the espanish-podcast skill's
+   emotion section defines the accepted tags/instructions.
 4. **Podcast audio — GPU swap, then render + publish inside the same swap.**
-   **Default engine: CosyVoice3 (fp32, per-block emotion).** Alternative
-   engine (no emotion, same two cloned voices): Qwen3-TTS 1.7B-Base (bf16 +
-   SDPA) — see "Qwen3-TTS alternative" below. Both run as a detached
-   `systemd-run --user` job that stops vLLM, synthesizes on the GPU, and
-   restarts vLLM (~3–4 min total, ~35× faster than the CPU path):
-   `systemd-run --user --unit=gpu-swap-iaahoy-podcast --property=TimeoutStartSec=0 --property=KillMode=process bash ~/.hermes/gpu-swaps/iaahoy-podcast-gpu-swap.sh /home/jgb/.hermes/projects/iaahoy/editions/<TODAY>.podcast.txt /home/jgb/.hermes/projects/iaahoy/build/podcast.mp3`
+   The **voice engine is owned by the `espanish-podcast` skill** — this step
+   only launches the swap; do NOT re-document how the voice is generated
+   here (engine internals, emotion, pronunciation and TTS pitfalls all live
+   in that skill). The **default engine is Qwen3-TTS 1.7B-Base voice-clone**
+   (two cloned narrators A/C, no per-block emotion); the other engines
+   (CosyVoice3 with emotion instruct, Qwen3-TTS VoiceDesign synthetic)
+   are selectable in `make_podcast.py` via `--engine` / `--mode` if a
+   specific episode needs them — see the espanish-podcast skill.
+   The swap is a **detached `systemd-run --user` job** that stops vLLM,
+   synthesizes the MP3 on the RTX 3090, re-renders + PUBLISHES the site,
+   and restarts vLLM (~3–4 min, ~35× faster than CPU). Launch it EXACTLY:
+   `systemd-run --user --unit=gpu-swap-iaahoy-podcast --property=TimeoutStartSec=0 --property=KillMode=process bash ~/.hermes/gpu-swaps/qwen3-podcast-gpu-swap.sh /home/jgb/.hermes/projects/iaahoy/editions/<TODAY>.podcast.txt /home/jgb/.hermes/projects/iaahoy/build/podcast.mp3`
+   (add `--no-publish` as a 4th arg for a trial that must not touch the
+   site/git — the target then only synthesizes the MP3).
    **REGLA DURO — SOLO via systemd-run (incidente 2026-10-19 01:21:
    vLLM caido ~7 h, edicion perdida):** NUNCA lanzar el wrapper como
    hijo de una llamada `terminal`/`execute_code` del agente: esas
@@ -162,68 +172,27 @@ first run of the day.
    modelo no volvio hasta que el usuario dio el reboot. `systemd-run
    --user` desacopla el job del arbol de procesos y grupo de procesos
    del agente: sobrevive a la muerte del agente (que durante el OFF
-   pierde su LLM de todos modos). Para una prueba que no toque el
-   sitio, anadir `--no-publish` como 3er arg (el target solo
-   sintetiza el MP3; el sitio y el git no se mueven).
-   **What it does** (see the `hyperqwen-gpu-swap` skill for the mechanism):
-   1. ~20 s margin, then **OFF**: stops the HyperQwen vLLM container
-      (frees the ~22.5 GB VRAM on the single RTX 3090).
-   2. **TARGET**: `iaahoy-podcast-gpu-target.sh` — starts the
-      `cosyvoice:gpu` container (conditional driver-lib mounts, 5
-      `--device` nodes), copies in `gpu_worker.py` (source of truth:
-      `~/.hermes/cache/cosyvoice/docker-build/gpu_worker.py`),
-      `podcast_gpu.py` (project scripts/), the day's script and the
-      `pron_dict.json`; runs `podcast_gpu.py` inside it: parses the
-      two-voice script, synthesizes every block with CosyVoice3 in **fp32
-       on the GPU** (RTF ~0.5, ~2–3 s per block; fp32 is the production
-       default — fp16 drifted F0 into English accent on long blocks;
-       `COSYVOICE_FP16=1` in the env forces fp16 for experiments),
-       assembles the MP3 with ffmpeg. Then, still inside the target (the agent is dead during the
-      OFF, so the deterministic tail must run here): `publish.py`
-      re-renders every edition, copies the MP3 to the site root, and
-      force-pushes the flattened history.
-   3. **ON**: restarts the vLLM container and waits until the
-      `/health` endpoint answers (agent is usable again).
-   **Emotion instructions are English-only and short** ("Speak in a
-   … tone." / "Talk …" patterns, e.g. "Speak cheerfully and loud") —
-   CosyVoice3's `instruct2` is English-tuned; long or Spanish
-   instructions leak into the audio. Write the English instruction
-   DIRECTLY in the script tag: `A [Speak cheerfully and loud]: ...` —
-   the worker's `resolve_instruct()` passes it through verbatim. Spanish
-   keys (alegre, cierre, …) still work as an indirection into the
-   `INSTRUCT` dict, but raw English is the preferred, unambiguous form.
-   Use sparingly: openings/closings and at most one dramatic beat; a
-   news digest is mostly neutral.
-   **Qwen3-TTS alternative (no emotion, same two cloned voices, 2026-10-21):**
-   if the episode does not need per-block emotion, run the same detached
-   `systemd-run --user` flow with the Qwen3-TTS scripts instead (the
-   `--no-publish` third arg works the same way):
-   `systemd-run --user --unit=gpu-swap-qwen3-podcast --property=TimeoutStartSec=0 --property=KillMode=process bash ~/.hermes/gpu-swaps/qwen3-podcast-gpu-swap.sh /home/jgb/.hermes/projects/iaahoy/editions/<TODAY>.podcast.txt /home/jgb/.hermes/projects/iaahoy/build/podcast.mp3 [--no-publish]`
-   It starts the `qwen3-tts:local` container (bf16 + SDPA, Qwen3-TTS-12Hz-
-   1.7B-Base, ~3-4 s/block), runs `qwen3_podcast.py` (same script format,
-   emotion tags ignored, numbers in Spanish, English terms read natively),
-   assembles the MP3 and then render+publish exactly like the CosyVoice
-   target. Model + refs live in `~/.hermes/cache/qwen3-tts/`; the worker is
-   `qwen3_worker.py` in the `espanish-podcast` skill (source of truth). Same
-   hard rules: only via `systemd-run`, end your turn right after launching,
-   verify in step 5.
-   **Acento inglés en un bloque = fp16, no el guion (2026-10-19):** el blk_06 de la
-   edición 10-18 salió con acento inglés (F0 mediana 214 Hz, derivando a ~272; refs C: 182-195):
-   `gpu_worker.py` corría fp16 en el contenedor y fp16 deriva el F0 en bloques largos (>~20 s).
-   fp32 (worker CPU, mismo código) dio el texto idéntico limpio → producción ahora es fp32:
-   `podcast_gpu.py` hereda `COSYVOICE_FP16` del env (default "0") y el target exporta
-   `COSYVOICE_FP16=0`. Prueba rápida de deriva: F0 por bloque (wavs en `build/wavs/wavs/`,
-   doble anidado) — C en 182-195, A en ~100; >200 = deriva.: openings/closings and at most one dramatic beat; a
-   news digest is mostly neutral.
+   pierde su LLM de todos modos).
+   **What it does** (the `hyperqwen-gpu-swap` skill documents the swap
+   mechanism in general): **OFF** stops the HyperQwen vLLM container
+   (frees the ~22.5 GB VRAM on the single RTX 3090) → **TARGET**
+   `qwen3-podcast-gpu-target.sh` starts the `qwen3-tts:local` container,
+   copies in the espanish-podcast worker + `qwen3_podcast.py` + the day's
+   script, synthesizes every block and assembles the MP3, then — still
+   inside the target, because the agent is dead during the OFF — runs
+   `publish.py` (re-render every edition, copy the MP3 to the site root,
+   force-push the flattened history) → **ON** restarts vLLM and waits until
+   `/health` answers. The target is mode-aware (`--mode clone|design`): it
+   mounts the Base model + refs for clone (default) or the VoiceDesign
+   model (no refs) for `design`.
    **You MUST end your turn right after launching the swap**: you lose
    your LLM in the OFF phase; the systemd job is detached (the agent can
    die, the chain finishes and vLLM comes back). When you're alive again
    (a later user message or your scheduled turn), verify in **step 5**.
-   **Fallback (no GPU available / swap fails twice):** the old CPU path —
-   `bash ~/.hermes/projects/iaahoy/scripts/podcast_systemd.sh --script … --out …`
-   (CosyVoice3 CPU via `make_podcast.py`, ~25–35 min; then run
-   `scripts/render.py` and `scripts/publish.py` from the project dir manually).
-   Only if that also OOMs, `--engine piper`.
+   **Fallback (no GPU available / swap fails twice):** the CPU path via the
+   `espanish-podcast` skill's `make_podcast.py` (~25–35 min; then run
+   `scripts/render.py` and `scripts/publish.py` from the project dir
+   manually). Only if that also OOMs, `--engine piper`.
 5. **VERIFY the published site** (run after the swap completes, i.e. in a
    later turn when vLLM is back — do not trust the swap's exit code alone).
    The swap already did render+publish inside the target, so this is
@@ -233,8 +202,9 @@ first run of the day.
    - `curl -s -o /dev/null -w '%{http_code}\n' https://jgbarahbot.github.io/iaahoy/podcast.mp3` → 200
      (the MP3 is today's — confirm size > ~200 KB and that
      `~/.hermes/projects/iaahoy/build/podcast.mp3` is fresh).
-   - Swap log with the full run: `~/.hermes/gpu-swaps/iaahoy-podcast-gpu-swap.log`
-     (look for `PODCAST OK` and `PUBLISH OK`; a `FALLO publish` line means the
+   - Swap log with the full run: `~/.hermes/gpu-swaps/qwen3-podcast-gpu-swap.log`
+     (the target writes `qwen3-podcast-gpu.log`; look for the target reaching
+     `PODCAST OK` and `PUBLISH OK`; a `FALLO publish` line means the
      MP3 exists but the push failed → run `python3 scripts/publish.py` from the
      project dir once vLLM is back).
    - Every page's `<audio src=...>` must resolve to `/podcast.mp3`: root uses
@@ -312,8 +282,15 @@ which renders wrong and reads wrong. So notes are produced in **two passes**:
 - **Pasa 2 — mark the English.** The ONE change: add *asterisks* around **only the
   terms that genuinely stay in English** (product names, model names, acronyms,
   licenses, tool/framework names — *MOSS-Image*, *DiT*, *Apache 2.0*, *SFT*,
-  *ComfyUI*, *vLLM*, *LoRA* …). Never asterisk a Spanish word. Never asterisk a
-  common technical noun you already translated in pasa 1.
+  *ComfyUI*, *vLLM*, *LoRA* …). **Two exclusions (user rule, 2026-10-24):**
+    1. *Never* asterisk a word that is spelled the same in Spanish —
+       `token`, `multimodal`, `benchmark`, `routing`, `sandbox`, `framework`,
+       `stream`, `GPU` (in Spanish too it's "GPU"), `LLM`, etc. are fine plain.
+       If it reads as Spanish, it stays plain.
+    2. *Never* asterisk a Spanish word, and *never* asterisk a noun you already
+       translated in pasa 1 (`renderizado`, `maquetación`, `pesos`…).
+  **The test:** if a Spanish reader would write that exact word the same way in
+  their own article, it stays plain.
 
 **JSON shape per note:**
 - `title` — the pasa-2 title (English terms in *asterisks*).
@@ -339,13 +316,18 @@ lead to the single most important item of the day.
 ## Pitfalls (learned)
 - `render.py` flags: `--json <edition.json> --css <style.css> --podcast <rel.mp3> --out <html>`; for the archive it's `--list-editions <editions_dir>` (not `--json`). `--podcast` is the RELATIVE path as it should appear in that page.
 - **`podcast_systemd.sh` needs ABSOLUTE `--script`/`--out` paths (learned 2026-10-14):** the one-shot systemd unit's CWD is NOT the project dir, so relative `editions/…` paths die instantly with `FileNotFoundError` (exit 1 in ~30 ms, 300 KB mem — NOT an OOM). Always pass `~/.hermes/projects/iaahoy/editions/<TODAY>.podcast.txt` and `~/.hermes/projects/iaahoy/build/podcast.mp3`. To see the REAL error (the launcher's `runs/podcast-*.log` only holds `systemd-run --wait`'s status), use `journalctl --user -u iaahoy-podcast.service --no-pager -n 40`.
-- **CosyVoice venv `bin/python` symlinks can be stripped:** if the unit fails in ~30 ms, check `~/.hermes/venvs/cosyvoice/bin/python` — if the `python`/`python3`/`python3.11` symlinks are gone, restore them to the base from `pyvenv.cfg` (`executable =`), e.g. `ln -sf <base> bin/python3.11 && ln -sf python3.11 bin/python3 && ln -sf python3.11 bin/python`.
-- **CosyVoice3 inside any Hermes worker = OOM 137 (learned the hard way):** the
-  worker cgroup cap is 4 GiB and the model needs ~4.2 GiB RSS; `OMP_NUM_THREADS`
-  does NOT help (it's the model weights, not thread stacks). ALWAYS run
-  CosyVoice synthesis through `podcast_systemd.sh` (MemoryMax=8G) or foreground
-  from the gateway scope. A background/foreground `terminal` call both die.
-- `make_podcast.py` canonical copy lives in `~/.hermes/skills/espanish-podcast/scripts/` (project copy is kept in sync); flags: `--script <podcast.txt> --out <podcast.mp3> --engine {cosy,piper}` (default `cosy`, `--only S E`, `--assemble`, `--clean`). Voice details, CosyVoice worker protocol, emotion instructions and TTS pitfalls are documented in the `espanish-podcast` skill — keep that boundary, don't re-document TTS here.
+- **NEVER run TTS synthesis inside a Hermes worker (learned 2026-10-14/19):**
+  any real engine (CosyVoice3, Qwen3-TTS CPU, VoiceDesign) needs more than the
+  4 GiB worker cgroup cap (`process_registry._WORKER_MEMORY_MAX_CAP_BYTES`) and
+  OOM-137s in a `terminal`/`execute_code` call (background OR foreground both
+die; `OMP_NUM_THREADS` does not help — it's model weights, not thread
+  stacks). The ONLY safe ways: (a) the GPU swap (a detached `systemd-run`
+  job — step 4) or (b) a detached systemd unit like `podcast_systemd.sh`
+  (`MemoryMax=8G`) / foreground from the gateway scope. The `--engine piper`
+  path is the only one that fits inside the 4 GiB worker cap and is the
+  in-worker last-resort fallback. Engine-specific OOM numbers, venv quirks
+  and the 12 GiB unit for Qwen3-TTS CPU are in the `espanish-podcast` skill.
+- `make_podcast.py` canonical copy lives in `~/.hermes/skills/espanish-podcast/scripts/` (project copy is kept in sync); flags: `--script <podcast.txt> --out <podcast.mp3> --engine {qwen,qwen-syn,cosy,piper}` (default `qwen` = Qwen3-TTS voice-clone; `qwen-syn` = Qwen3-TTS VoiceDesign synthetic; `cosy` = CosyVoice3 emotion; `piper` = CPU fallback; plus `--only S E`, `--assemble`, `--clean`). Engine, worker protocol, emotion and all TTS pitfalls are documented in the `espanish-podcast` skill — keep that boundary, don't re-document TTS here.
 - English-IPA mechanism (do NOT "fix" it): piper's `[[…]]` blocks are split **char-by-char** (`voice.py`: `extend(text_part[2:-2].strip())`) and each char is looked up in the model's phoneme id-map, unknowns skipped silently. piper's own `;en` inline switch does NOT work (phonemize_espeak strips (lang) flags, L40) — the working path is pre-phonemizing the term with espeakbridge (`EspeakPhonemizer()` to init, then `set_voice("en-us")`, `get_phonemes(term)`) and wrapping the IPA in `[[…]]`. espeakbridge without prior init segfaults.
 - The archive page lives in `editions/`, so its podcast link MUST be `../podcast.mp3` (publish.py already does this); if you ever hand-render the archive, use `../podcast.mp3`.
 - HF blog HTML is JS-rendered → use RSS `desc` (often empty) + `web_search` to ground the lead story, not raw HTML scrape.
@@ -357,7 +339,7 @@ lead to the single most important item of the day.
 
 - **Nunca el wrapper del swap en foreground de una llamada a tool del agente** (2026-10-19 01:21): el timeout de la llamada lo mato con SIGKILL (no atrapable) antes de que el trap hiciese el ON; vLLM quedo caido 01:21-08:40 (hasta el reboot del usuario), el cron de 08:30 fallo en silencio y se perdio la edicion del dia. El wrapper solo se lanza con `systemd-run --user` (step 4), y el cron empieza con el pre-flight de salud de vLLM (step 0).
 - **Un `podman start hyperqwen` a secas (sin `hyperqwen_on.sh`) puede dejar un zombi** (contenedor Up, modelo no sirve; sin crash en systemd que lo detecte). Si vLLM no responde, usar siempre `hyperqwen_on.sh` (rama zombie + check de chat/completions + flock), nunca un `podman start` directo.
-- **Calidad del MP3 del podcast (2026-10-19, dos bugs encontrados por el usuario y verificados con faster-whisper):** (1) `refA.wav`/`refC.wav` en `~/.hermes/cache/cosyvoice/` estaban apuntando a clones viejos de Piper (davefx, acento inglés) en vez de las muestras del usuario — el worker clona `refA`/`refC` literalmente, así que **antes de sintetizar comprueba que `refA.wav` = `ref_user.wav` (12 s, voz del usuario) y `refC.wav` = `ref_F.wav` (6.85 s, femenina)** (md5 debe coincidir). (2) `inference_instruct2` requiere el prefijo oficial `You are a helpful assistant. <instr><|endofprompt|>`; sin él la frase en inglés se lee en voz alta al inicio del bloque (se oía "cheerfully and la" en la edición 10-18). **Después de cada MP3, transcribe el primer y el último bloque** (faster-whisper medium, venv Python 3.14 en `/home/jgb/.hermes/installs/d6a27a1debcdb2b5/environments/87801bca3da147548792a18b93c00f82/venv/bin/python`) y verifica que no aparezca texto en inglés. Ver skill `espanish-podcast` para el detalle del formato.
+- **Calidad del MP3 del podcast (2026-10-19, bugs encontrados por el usuario y verificados con faster-whisper):** el worker clona `refA.wav`/`refC.wav` literalmente, así que **antes de sintetizar comprueba que los refs que usa el engine activo son los del usuario** — para el engine por defecto Qwen3-TTS eso son `~/.hermes/cache/qwen3-tts/refA.wav` (voz del usuario, ~12 s) y `refC.wav` (femenina, ~8 s); para CosyVoice (`--engine cosy`) son `~/.hermes/cache/cosyvoice/refA.wav`/`refC.wav` (deben coincidir en md5 con `ref_user.wav` / `ref_F.wav`). **Después de cada MP3, transcribe el primer y el último bloque** (faster-whisper medium, venv Python 3.14 en `/home/jgb/.hermes/installs/d6a27a1debcdb2b5/environments/87801bca3da147548792a18b93c00f82/venv/bin/python`) y verifica que no aparezca texto en inglés. Con el engine por defecto (Qwen3-TTS clone) NO hay canal de instrucción, así que no debe haber NINGÚN inglés; si lo hay es un bug del worker. (El bug histórico de `inference_instruct2` — la frase en inglés leída en voz alta — era específico de CosyVoice `--engine cosy`, donde la instrucción debe llevar el prefijo `You are a helpful assistant. …<|endofprompt|>`; ver el skill `espanish-podcast` para el detalle del formato y de ese prefijo.)
 ## Cron
 The daily 08:30 job (08:30 CEST) fires this exact flow. When you run it, your
 FINAL RESPONSE is delivered to the user — write a 2–4 line Spanish summary:
