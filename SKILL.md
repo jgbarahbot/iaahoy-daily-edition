@@ -1,7 +1,7 @@
 ---
 name: iaahoy-daily-edition
 description: "iaahoy: produce + publish daily Spanish open-AI newspaper."
-version: 2.18.0
+version: 2.19.0
 author: jgbarah
 license: MIT
 platforms: [linux]
@@ -40,7 +40,11 @@ Title: **"IA Abierta Hoy"** (short form: **IA*A*Hoy**).
 ## Paths & auth
 - Project: `~/.hermes/projects/iaahoy/`
   - `scripts/collector.py`   — gathers raw material → `material.json`
-  - `scripts/render.py`      — edition JSON → standalone HTML (CSS inlined)
+  - `scripts/render.py`      — edition JSON → standalone HTML (CSS inlined).
+                                v2.19: `esc_em()` turns *term* markers in
+                                title/summary/body into <em>term</em> (the
+                                two-pass English-term convention); a lone `*`
+                                passes through untouched.
   - (podcast audio is synthesized in step 4: GPU path via
                                 `scripts/podcast_gpu.py` + `gpu_worker.py` in
                                 the `cosyvoice:gpu` container, or the CPU
@@ -112,11 +116,13 @@ first run of the day.
 2. **Curate (YOU — the LLM step).** Read `material.json` + a recent
    `editions/*.json` as a format reference. Write `editions/<TODAY>.json`
    in Spanish. Structure: masthead fields + `lead` (portada) + 3–5 `sections`,
-   each with `title` + 2–4 `notes`. Each note: `title`, `summary` (2–4 Spanish
-   sentences), `tags` (list), `links` (list of {label,url} — ≥1, prefer
-   technical). Use REAL URLs from material; if a summary needs grounding and
-   the RSS desc is empty, use `web_search` to verify facts. No placeholder
-   links — every URL must be real. **The `colophon` block MUST carry**:
+   each with `title` + 2–4 `notes`. Each note follows the **two-pass Spanish
+   method** (see below): `title`, `summary` (ONE recap paragraph), `body`
+   (list of flowing paragraphs — the actual article), `tags` (list), `links`
+   (list of {label,url} — ≥1, prefer technical). Use REAL URLs from material;
+   if a summary needs grounding and the RSS desc is empty, use `web_search`
+   to verify facts. No placeholder links — every URL must be real. **The
+   `colophon` block MUST carry**:
    `title: "IA Abierta Hoy"`, `short_title: "IA*A*Hoy"`, and a `fineprint`
    string in the form:
    `Contenido generado automáticamente a partir de fuentes públicas por Hermes, usando <MODELO>, para que lo disfrutes y te sea útil.`
@@ -252,13 +258,22 @@ first run of the day.
   },
   "sections": [
     { "title": "Modelos", "notes": [
-      { "title": "…", "summary": "…", "tags": ["…"],
+      { "title": "… (terms that stay in English *in asterisks*)",
+        "summary": "… ONE recap paragraph, same asterisk convention …",
+        "body": ["… paragraph 1 …","… paragraph 2 …","… paragraph 3 …"],
+        "tags": ["…"],
         "links": [{"label": "GitHub", "url": "…"}] }
     ]},
     { "title": "Agentes y software", "notes": [ … ]},
     { "title": "Papers e investigación", "notes": [ … ]},
     { "title": "Comunidad y self-hosting", "notes": [ … ]}
   ],
+
+  // NOTE: `body` is a LIST of flowing paragraphs (render.py turns each into
+  // a <p>, and converts *term* markers into <em>term</em>). `summary` is a
+  // single recap paragraph shown in italics above the body. Both carry the
+  // same two-pass asterisk convention. The lead (portada) uses the same
+  // summary + body shape.
   "colophon": {
     "title": "IA Abierta Hoy",
     "short_title": "IA*A*Hoy",
@@ -273,6 +288,50 @@ first run of the day.
 The `made_with` list feeds the "Hecho con Hermes" note at the bottom of the
 page (render.py turns each trailing `https://github.com/…/…` URL into a link)
 — always keep the two skill entries with their repo URLs.
+
+## The two-pass Spanish method (how EVERY note is written)
+
+This is the editorial convention the user fixed on 2026-10-24 after the MOSS-Image
+note (reference: `NOTA_MOSS-Image_v8.md`). The failure it prevents: writing
+Spanish that still carries English phrasing, and then slapping *asterisks* onto
+**Spanish** words (because the phrase was inherited from the English source) —
+which renders wrong and reads wrong. So notes are produced in **two passes**:
+
+- **Pasa 1 — pure Spanish.** Write the whole note as flowing Spanish, translating
+  EVERYTHING that can reasonably be translated. No asterisks at all. Rules:
+  - *weights* → **pesos**, *render* → **renderizado**, *layout* → **maquetación**,
+    *state-of-the-art* → **el mejor entre…**, *technical report* → **informe técnico**,
+    *open-weights* → **pesos abiertos**, *single-file* → **archivo único**, *self-hosting* →
+    **self-hosting** (kept — it has no clean Spanish equivalent) or **autalojamiento**.
+  - **Unfamiliar acronyms are expanded in parentheses on FIRST use only**: e.g.
+    "un transformer de difusión (DiT, de «diffusion transformer»)", "ajuste fino
+    supervisado (SFT, de «supervised fine-tuning»)", "LongLongTextBench (LLTB)". After
+    the first expansion, use the bare acronym.
+  - **No per-paragraph bold headers.** The body is one continuous piece of prose,
+    only split into paragraphs (no "**Arquitectura:**"-style lead-ins).
+- **Pasa 2 — mark the English.** The ONE change: add *asterisks* around **only the
+  terms that genuinely stay in English** (product names, model names, acronyms,
+  licenses, tool/framework names — *MOSS-Image*, *DiT*, *Apache 2.0*, *SFT*,
+  *ComfyUI*, *vLLM*, *LoRA* …). Never asterisk a Spanish word. Never asterisk a
+  common technical noun you already translated in pasa 1.
+
+**JSON shape per note:**
+- `title` — the pasa-2 title (English terms in *asterisks*).
+- `summary` — **exactly ONE paragraph** that recaps the whole note (the "lead" the
+  reader can skip the body for). Pasa-2 asterisks.
+- `body` — **a list of flowing paragraphs** (the actual article; the lead is 3
+  paragraphs, most notes 2–3, a flagship note up to ~6). Each list item becomes a
+  `<p>`. Target ~500–600 words for a flagship/lead, ~120–250 for a regular note.
+- `tags` — snake_case slugs (unchanged).
+- `links` — ≥1, real, technical.
+
+**HTML rendering (render.py `esc_em`):** the asterisks in `title`/`summary`/`body`
+are converted to `<em>term</em>` — they render as *styled* foreign terms (weight +
+accent color, NOT italic, since the recap already uses italics), never as literal
+`*`. A lone unpaired `*` never matches and passes through escaped. The **podcast
+script keeps the raw asterisks** — there they are the TTS cue to read a term in
+English, so do not "fix" them out of the `.podcast.txt`. Do not hand-write `<em>`
+in the JSON; always write the source with asterisks and let `render.py` convert.
 Suggested section titles (adapt to the day's news): **Modelos**, **Agentes y
 software**, **Papers e investigación**, **Comunidad y self-hosting**. Keep the
 lead to the single most important item of the day.
