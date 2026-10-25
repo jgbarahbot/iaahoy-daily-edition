@@ -1,7 +1,7 @@
 ---
 name: iaahoy-daily-edition
 description: "iaahoy: produce + publish daily Spanish open-AI newspaper."
-version: 2.20.0
+version: 2.21.0
 author: jgbarah
 license: MIT
 platforms: [linux]
@@ -35,7 +35,7 @@ Audience: people who care about open source, open AI, self-hosting AI.
 **Everything is written in Spanish. Every note needs ≥1 follow-up link**
 (prefer GitHub/GitLab repo, HuggingFace card, arXiv, or a technical page).
 
-Title: **"IA Abierta Hoy"** (short form: **IA*A*Hoy**).
+Title: **"IA·A·Hoy"** (middle dots, as in the masthead; short form **IA*A*Hoy**). Both the HTML `<title>` and the visible H1 use `IA·A·Hoy` (render.py v2.21 handles it).
 
 ## Paths & auth
 - Project: `~/.hermes/projects/iaahoy/`
@@ -115,8 +115,18 @@ selects alternatives — see that skill). Load `hyperqwen-gpu-swap` and
 2. **Curate (YOU — the LLM step).** Read `material.json` + a recent
    `editions/*.json` as a format reference. Write `editions/<TODAY>.json`
    in Spanish. Structure: masthead fields + `lead` (portada) + 3–5 `sections`,
-   each with `title` + 2–4 `notes`. Each note follows the **two-pass Spanish
-   method** (see below): `title`, `summary` (ONE recap paragraph), `body`
+   each with `title` + 2–4 `notes`. **Standard sections (user convention
+   2026-10-25, adapt to the day's news):** **Modelos**, **Agentes libres**,
+   **Software libre para IA**, **Papers e investigación**, **Comunidad y
+   self-hosting**. The agent/software split: **Agentes libres** = free
+   *agents* (new agents, improvements to existing ones, skills for agents,
+   novel uses of agents); **Software libre para IA** = non-agent open-source
+   AI software (engines, CLIs, monitors, runtimes, tools). Both carry a
+   similar number of notes as the other sections. **Lead length:** the
+   portada may run to **700–800 words** when the story has real material
+   (do not pad it when it doesn't); regular notes stay ~120–250 words. Each
+   note follows the **two-pass Spanish method** (see below): `title`,
+   `summary` (ONE recap paragraph), `body`
    (list of flowing paragraphs — the actual article), `tags` (list), `links`
    (list of {label,url} — ≥1, prefer technical). Use REAL URLs from material;
    if a summary needs grounding and the RSS desc is empty, use `web_search`
@@ -136,9 +146,20 @@ selects alternatives — see that skill). Load `hyperqwen-gpu-swap` and
    text, blank line between blocks, `*English terms*` marked with asterisks,
    length) live in the `espanish-podcast` skill — **load it**
    (`skill_view(name="espanish-podcast")`) and write the script exactly the
-   the way that skill describes. Content: open with the show name ("IA Abierta
-   Hoy"), hit the portada, walk through all the sections, close with a short
-   sign-off; target ~3–5 minutes when spoken (~18 blocks, 9 per voice).
+   the way that skill describes. **Source of the script (user rule
+   2026-10-25): derive it from the day's edition text itself** — the JSON
+   you just wrote (already passed through the two-pass method, i.e. already
+   translated) — not from the raw English material: read the portada
+   summary + each section's summaries (and skim the bodies) and turn them
+   into spoken blocks. Open with the show name ("IA Abierta Hoy"), hit the
+   portada, walk through all the sections, close with a short sign-off;
+   target ~3–5 minutes when spoken (~18 blocks, 9 per voice). **Translation
+   discipline:** the same bar as pasa 1 applies — a term that has an obvious
+   Spanish equivalent (*open weights*→pesos abiertos, *coding*→código,
+   *trending*→tendencia, *likes*→me gusta) must be in Spanish in the script
+   too; asterisks go ONLY on the terms that genuinely stay in English (names,
+   acronyms, tools) — and ideally exactly the ones the edition asterisks, so
+   the audio and the page stay consistent.
    **Do NOT mention the number of voices or narrator identity in the script —
    just use the voices naturally.** Don't overdo asterisks: only mark genuine
    English terms, not Spanish words. Emotion markers are OPTIONAL: the default
@@ -234,7 +255,8 @@ selects alternatives — see that skill). Load `hyperqwen-gpu-swap` and
         "tags": ["…"],
         "links": [{"label": "GitHub", "url": "…"}] }
     ]},
-    { "title": "Agentes y software", "notes": [ … ]},
+    { "title": "Agentes libres", "notes": [ … ]},
+    { "title": "Software libre para IA", "notes": [ … ]},
     { "title": "Papers e investigación", "notes": [ … ]},
     { "title": "Comunidad y self-hosting", "notes": [ … ]}
   ],
@@ -272,7 +294,15 @@ which renders wrong and reads wrong. So notes are produced in **two passes**:
   - *weights* → **pesos**, *render* → **renderizado**, *layout* → **maquetación**,
     *state-of-the-art* → **el mejor entre…**, *technical report* → **informe técnico**,
     *open-weights* → **pesos abiertos**, *single-file* → **archivo único**, *self-hosting* →
-    **self-hosting** (kept — it has no clean Spanish equivalent) or **autalojamiento**.
+    **self-hosting** (kept — it has no clean Spanish equivalent) or **autalojamiento**,
+    *coding* → **codificación/código**, *trending* → **tendencia**, *likes* → **me gusta**,
+    *open source* → **código abierto/software libre**. **The user's 2026-10-25
+    bar:** common, easily-translatable English words must NOT survive into the
+    text — not just in the podcast script, in the notes themselves. It is not
+    zero-tolerance (some English slips through, especially for the most
+    habitual terms), but the translation effort should be visible: when a
+    Spanish reader would naturally say *pesos abiertos* instead of *open
+    weights*, that is what the note says.
   - **Unfamiliar acronyms are expanded in parentheses on FIRST use only**: e.g.
     "un transformer de difusión (DiT, de «diffusion transformer»)", "ajuste fino
     supervisado (SFT, de «supervised fine-tuning»)", "LongLongTextBench (LLTB)". After
@@ -309,12 +339,16 @@ accent color, NOT italic, since the recap already uses italics), never as litera
 script keeps the raw asterisks** — there they are the TTS cue to read a term in
 English, so do not "fix" them out of the `.podcast.txt`. Do not hand-write `<em>`
 in the JSON; always write the source with asterisks and let `render.py` convert.
-Suggested section titles (adapt to the day's news): **Modelos**, **Agentes y
-software**, **Papers e investigación**, **Comunidad y self-hosting**. Keep the
-lead to the single most important item of the day.
+Standard section titles (user convention 2026-10-25, adapt to the day's
+news): **Modelos**, **Agentes libres**, **Software libre para IA**, **Papers
+e investigación**, **Comunidad y self-hosting**. **Agentes libres** holds
+free *agents* only (new agents, improvements, agent skills, novel agent
+uses); **Software libre para IA** holds the other open-source AI software
+(engines, CLIs, runtimes, monitors — no agents). Keep the lead to the single
+most important item of the day (up to 700–800 words when it has material).
 
 ## Pitfalls (learned)
-- `render.py` flags: `--json <edition.json> --css <style.css> --podcast <rel.mp3> --out <html>`; for the archive it's `--list-editions <editions_dir>` (not `--json`). `--podcast` is the RELATIVE path as it should appear in that page.
+- `render.py` flags: `--json <edition.json> --css <style.css> --podcast <rel.mp3> --out <html>`; for the archive it's `--list-editions <editions_dir>` (not `--json`). `--podcast` is the RELATIVE path as it should appear in that page. **Masthead (v2.21):** H1 renders as `IA·A·Hoy` (middle dots), the topline says «La IA abierta resumida por una IA abierta», and the dateline nav auto-builds one anchor link per section (slugs generated by `_slug()`, accent-stripped) next to Archivo — the JSON needs no `id`/icon fields for this. The podcast block renders INSIDE the page container with the fixed label «IA·A·Hoy Hablada: un resumen pensado para oírse»; do not hand-build an audio tag in the JSON.
 - **`podcast_systemd.sh` needs ABSOLUTE `--script`/`--out` paths (learned 2026-10-14):** the one-shot systemd unit's CWD is NOT the project dir, so relative `editions/…` paths die instantly with `FileNotFoundError` (exit 1 in ~30 ms, 300 KB mem — NOT an OOM). Always pass `~/.hermes/projects/iaahoy/editions/<TODAY>.podcast.txt` and `~/.hermes/projects/iaahoy/build/podcast.mp3`. To see the REAL error (the launcher's `runs/podcast-*.log` only holds `systemd-run --wait`'s status), use `journalctl --user -u iaahoy-podcast.service --no-pager -n 40`.
 - **NEVER run TTS synthesis inside a Hermes worker (learned 2026-10-14/19):**
   any real engine (CosyVoice3, Qwen3-TTS CPU, VoiceDesign) needs more than the
