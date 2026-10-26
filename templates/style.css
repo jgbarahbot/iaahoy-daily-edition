@@ -21,10 +21,13 @@ body{
   font-family:var(--serif);line-height:1.5;
   -webkit-font-smoothing:antialiased;
   font-size:17px;
+  /* long unbreakable tokens (repo slugs, URLs) must wrap, never force
+     horizontal scroll on narrow screens (user report 2026-10-25) */
+  overflow-wrap:anywhere;
 }
 a{color:var(--accent-2);text-underline-offset:2px}
 a:hover{color:var(--accent)}
-.wrap{max-width:1180px;margin:0 auto;padding:0 20px}
+.wrap{max-width:1180px;margin:0 auto;padding:0 20px;min-width:0}
 
 /* ---------- Masthead ---------- */
 .masthead{padding:18px 0 10px;border-bottom:3px double var(--rule-strong)}
@@ -46,6 +49,22 @@ a:hover{color:var(--accent)}
 .dateline .ed{color:var(--accent);font-weight:700}
 .dateline nav a{color:var(--ink-soft);text-decoration:none;margin-right:14px;font-size:12.5px;text-transform:uppercase;letter-spacing:.08em}
 .dateline nav a:hover{color:var(--accent)}
+.dateline nav .sep{color:var(--rule);margin-right:14px}
+
+/* ---------- Podcast block (the daily audio) ----------
+   Lives INSIDE .wrap (the page container): the old version sat between the
+   masthead and the container and bled to the left edge (user report
+   2026-10-25). The label is the show name itself, on the line above the
+   player, per the same report. */
+.podcast-cta{
+  margin:16px 0 6px;padding:14px 18px 16px;
+  background:var(--paper-2);
+  border:1px solid var(--rule);border-left:4px solid var(--accent);
+  border-radius:2px;
+}
+.podcast-cta .podcast-label{margin:0 0 10px;font-size:15.5px;color:var(--ink);font-style:italic}
+.podcast-cta .podcast-label b{font-style:normal;color:var(--accent);letter-spacing:.01em}
+.podcast-cta audio{width:100%;display:block}
 
 /* ---------- Featured / portada ---------- */
 .featured{
@@ -62,6 +81,20 @@ a:hover{color:var(--accent)}
 .featured .fbody{columns:2;column-gap:34px;column-rule:1px solid var(--rule);font-size:16.5px}
 .featured .fbody p{margin:0 0 10px}
 @media(max-width:640px){.featured .fbody{columns:1}}
+/* Lead illustration (moss-image-news-illustration): between the summary and
+   the first body paragraph. MUST never force horizontal scroll on narrow
+   screens (user rule 2026-10-25): max-width:100% on the <img> is the guard,
+   width:auto keeps its natural aspect, height:auto avoids distortion. */
+.lead-illo{margin:14px 0 6px}
+.lead-illo img{
+  display:block;width:auto;max-width:100%;height:auto;
+  margin:0 auto;border:1px solid var(--rule);border-radius:2px;
+  box-shadow:0 1px 3px rgba(0,0,0,.08);
+}
+.lead-illo figcaption{
+  font-family:var(--sans);font-size:12px;color:var(--ink-soft);
+  text-align:center;margin-top:6px;letter-spacing:.02em;
+}
 
 /* ---------- Layout grid ---------- */
 .paper{display:grid;grid-template-columns:1fr 340px;gap:34px;padding:24px 0 40px}
@@ -86,6 +119,7 @@ section.block:last-child{border-bottom:0}
 .note{
   background:var(--card);border:1px solid var(--rule);border-left:4px solid var(--accent-2);
   padding:14px 16px;margin:0 0 14px;border-radius:2px;
+  min-width:0;word-break:break-word;
 }
 .note.feature{border-left-color:var(--accent);background:#fff}
 .note h4{margin:0 0 6px;font-size:19px;font-weight:700;letter-spacing:-.005em}
@@ -93,20 +127,44 @@ section.block:last-child{border-bottom:0}
 .note h4 a:hover{color:var(--accent)}
 .note p{margin:0 0 8px;font-size:15.5px;color:var(--ink-soft)}
 .note .spec{font-family:var(--sans);font-size:12.5px;color:var(--ink-soft);letter-spacing:.02em;margin:0 0 8px}
+/* Two-pass recap: the single summary paragraph that opens each note. */
+.note .resumen{font-style:italic;color:var(--ink);margin:0 0 10px}
+/* Foreign (still-English) terms marked with *asterisks* in the source.
+   Not italic (the recap already uses italics) — stand out by weight + color. */
+em{font-style:normal;font-weight:600;color:var(--accent-2)}
+.note .resumen em,.featured .lead em{color:var(--ink)}
 .note .spec b{color:var(--ink)}
 
 /* chips: tags + links */
-.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;min-width:0}
 .chip{
   font-family:var(--sans);font-size:11.5px;letter-spacing:.03em;
   background:var(--chip-bg);color:var(--ink-soft);
-  padding:3px 9px;border-radius:999px;border:1px solid var(--rule);white-space:nowrap;
+  padding:3px 9px;border-radius:999px;border:1px solid var(--rule);
+  max-width:100%;overflow-wrap:anywhere;word-break:break-word;
 }
 .chip.link{background:#fff;color:var(--accent-2);text-decoration:none;border-color:var(--accent-2);font-weight:600}
 .chip.link::before{content:"→ ";opacity:.7}
 .chip.link:hover{background:var(--accent-2);color:#fff}
 .chip.src{background:#fff;color:var(--ink-soft);border-style:dashed;font-weight:400}
 .chip.src::before{content:""; }
+
+/* ---------- Small-screen tuning (phones ≤ 480px) ----------
+   The layout is fluid (clamp() + single column below 860px); this block
+   only trims fixed sizes that would feel heavy on a phone (user report
+   2026-10-25: not adapted to mobile). */
+@media(max-width:480px){
+  body{font-size:16px}
+  .wrap{padding:0 14px}
+  .masthead h1{font-size:clamp(34px,11vw,44px)}
+  .dateline{flex-direction:column;align-items:flex-start;gap:4px}
+  .featured .fbody{font-size:16px}
+  .featured .lead{font-size:17px}
+  .note{padding:12px 13px}
+  .note p,.note .resumen{font-size:15px}
+  .dropcap::first-letter{font-size:46px;padding:2px 6px 0 0}
+  .colophon{padding:16px 0 36px}
+}
 
 /* ---------- Aside blocks ---------- */
 .aside h5{
@@ -150,6 +208,17 @@ section.block:last-child{border-bottom:0}
 .colophon .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px}
 .colophon a{color:var(--accent-2)}
 .colophon .fineprint{margin-top:16px;font-size:12px;border-top:1px solid var(--rule);padding-top:12px;font-style:italic}
+
+/* ---------- Archive list (editions/index.html) ----------
+   Each row: the clickable "Edición nº N · <date>" (accent), then the portada
+   headline as plain context below it (user rule 2026-10-25 — the filename
+   never appears). */
+.editions-list{list-style:none;margin:0;padding:0}
+.editions-list li{padding:12px 0;border-bottom:1px dotted var(--rule)}
+.editions-list li:last-child{border-bottom:0}
+.editions-list a{color:var(--accent);font-weight:700;text-decoration:none;font-size:16px;letter-spacing:.01em}
+.editions-list a:hover{color:var(--accent-2)}
+.editions-list .lead-ctx{display:block;color:var(--ink-soft);font-size:14.5px;font-style:italic;margin-top:3px}
 
 /* drop cap on first featured paragraph */
 .dropcap::first-letter{

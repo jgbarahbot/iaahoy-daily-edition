@@ -175,6 +175,19 @@ def assemble():
                  "--podcast", "../podcast.mp3",
                  "--out", os.path.join(BUILD, "editions", e["date"] + ".html")])
 
+    # copy lead-illustration assets (v2.23.0: lead.illustration in the JSON)
+    # into the site root so index.html -> assets/<file> and
+    # editions/<date>.html -> ../assets/<file> both resolve.
+    assets_dir = os.path.join(PROJ, "build", "assets")
+    if os.path.isdir(assets_dir):
+        dest = os.path.join(BUILD, "assets")
+        os.makedirs(dest, exist_ok=True)
+        for fn in sorted(os.listdir(assets_dir)):
+            if fn.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+                shutil.copyfile(os.path.join(assets_dir, fn),
+                                os.path.join(dest, fn))
+                print("asset copied:", fn)
+
     # copy today's audio into the build (single slot, overwritten daily)
     if os.path.exists(PODCAST_SRC):
         shutil.copyfile(PODCAST_SRC, os.path.join(BUILD, "podcast.mp3"))
