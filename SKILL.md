@@ -1,7 +1,7 @@
 ---
 name: iaahoy-daily-edition
 description: "iaahoy: produce + publish daily Spanish open-AI newspaper."
-version: 2.23.0
+version: 2.24.0
 author: jgbarah
 license: MIT
 platforms: [linux]
@@ -493,10 +493,35 @@ die; `OMP_NUM_THREADS` does not help — it's model weights, not thread
   among the seeds — or, if they do not express a preference, default to the
   first seed's image. Never claim to have "checked" the image content; you
   cannot.
-## Cron
-The daily 08:30 job (08:30 CEST) fires this exact flow. When you run it, your
-FINAL RESPONSE is delivered to the user — write a 2–4 line Spanish summary:
-edition date, the portada headline, 2–3 other highlights, and the live URL.
+## Cron (three-stage self-healing chain, v2.24.0)
+The daily flow is split across **three scheduled one-shot jobs** because the
+two GPU swaps (MOSS step 3, podcast step 5) each take vLLM offline — and
+with it the agent's own LLM — so no single session can cross both. Each stage
+is its own scheduled trigger: a stall in one is picked up by the next. This
+chain was added on 2026-10-27 after the 08:30 one-shot ended its turn after
+the MOSS swap and nothing woke it for 24 h (the edition sat unpublished until
+it was finished manually).
+
+- **08:30 — `iaahoy-daily-edition`** (job `3c49b1337e9c`, deliver: matrix
+  home channel): steps 0–3 — vLLM pre-flight, collect, curate
+  `editions/<TODAY>.json`, launch the MOSS cover swap, **end turn**. Its
+  final response is only a note that the swap is running.
+- **10:00 — `iaahoy-continuation`** (job `cc78349fa90e`, deliver: local):
+  vLLM is back. IDEMPOTENT finish: if the edition is already live (permalink
+  200 + fresh MP3) report and stop; otherwise integrate the cover image if
+  `lead.illustration` is missing (first seed's PNG → JPEG, step 3.5), write
+  the podcast script if missing (step 4), launch the podcast+publish swap
+  (step 5), **end turn**.
+- **10:45 — `iaahoy-verify`** (job `2a1b79015a05`, deliver: matrix home
+  channel): vLLM is back. Verify the live site (root 200, permalink 200,
+  `podcast.mp3` fresh > ~200 KB matching the local build mtime, cover 200,
+  swap log `PODCAST OK` + `PUBLISH OK`). If good → deliver the day's 2–4
+  line Spanish summary (edition date + nº, portada headline, 2–3
+  highlights, live URL) — **the user's daily message comes from THIS job,
+  not from the 08:30 one**. If not live → recover with the GPU-free CPU path
+  (`podcast_systemd.sh` + `publish.py`), re-verify, then deliver the summary
+  (noting recovery); after two failed attempts, deliver a plain Spanish
+  notice that the edition did not ship, with the error.
 
 **The swap is the ONLY publish path — never run `publish.py` by itself before
 the MP3 exists.** The job's cron prompt used to list "5 steps"
@@ -513,8 +538,11 @@ first, publish only via it.
 Since v2.23.0 (2026-10-26) the flow has TWO detached swaps and TWO end-turn
 points: the MOSS illustration swap (step 3) first, then — after integrating
 the image and writing the script — the podcast swap (step 5). The agent
-ends its turn after each swap; each is resumed by the next user message or
-scheduled turn. If the illustration batch fails twice, skip the
+ends its turn after each swap; since v2.24.0 (2026-10-27) each end-turn is
+resumed by the next SCHEDULED stage of the three-stage cron chain above
+(10:00 continuation, 10:45 verify) — never by waiting for a user message,
+because a one-shot 08:30 job has no other trigger for 24 h (the 2026-10-27
+stall). If the illustration batch fails twice, skip the
 integration (no `lead.illustration`) and proceed straight to the podcast
 swap — the edition must publish regardless.
 
