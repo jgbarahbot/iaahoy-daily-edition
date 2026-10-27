@@ -1,7 +1,7 @@
 ---
 name: iaahoy-daily-edition
 description: "iaahoy: produce + publish daily Spanish open-AI newspaper."
-version: 2.24.0
+version: 2.25.0
 author: jgbarah
 license: MIT
 platforms: [linux]
@@ -163,7 +163,9 @@ because that swap's publish renders from the JSON.
 2. **Curate (YOU — the LLM step).** Read `material.json` + a recent
    `editions/*.json` as a format reference. Write `editions/<TODAY>.json`
    in Spanish. Structure: masthead fields + `lead` (portada) + 3–5 `sections`,
-   each with `title` + 2–4 `notes`. **Standard sections (user convention
+   each with `title` + 2–4 `notes`, + the REQUIRED `aside` right column
+   (see schema below — built from `material.json`; a missing `aside` ships
+   the day WITHOUT its right column, incident 2026-10-27). **Standard sections (user convention
    2026-10-25, adapt to the day's news):** **Modelos**, **Agentes libres**,
    **Software libre para IA**, **Papers e investigación**, **Comunidad y
    self-hosting**. The agent/software split: **Agentes libres** = free
@@ -301,6 +303,13 @@ because that swap's publish renders from the JSON.
    later turn when vLLM is back — do not trust the swap's exit code alone).
    The swap already did render+publish inside the target, so this is
    check-only:
+   - **Right column populated (2.25.0, mandatory since the 2026-10-27
+     missing-column incident):** the day's page must carry all THREE
+     `aside-block`s (Repos en tendencia / Papers del día / Comunidad en
+     ebullición) with items in each — `grep -c 'class="repo"'` ≥ 3, a
+     populated papers list, a populated community list on the live bytes
+     (cache-bust with `?v=`). If the `aside` is empty, the JSON is missing
+     it: build it from `material.json` per the schema, re-render, re-publish.
    - `curl -s -o /dev/null -w '%{http_code} %{size_download}\n' https://jgbarahbot.github.io/iaahoy/` → 200.
    - Pages first build takes ~30–60 s after a push; poll once if it 404s.
    - `curl -s -o /dev/null -w '%{http_code}\n' https://jgbarahbot.github.io/iaahoy/podcast.mp3` → 200
@@ -349,6 +358,28 @@ because that swap's publish renders from the JSON.
     { "title": "Papers e investigación", "notes": [ … ]},
     { "title": "Comunidad y self-hosting", "notes": [ … ]}
   ],
+
+  // REQUIRED (2.25.0, incident 2026-10-27): the right column. render.py
+  // renders an EMPTY <aside> wrapper when this key is absent, and nothing
+  // errors — so curation must always build it from material.json and the
+  // verify step (6) must confirm it is populated before publishing.
+  "aside": {
+    "trending": [                        // 5 items, from gh_trending
+      { "name": "owner/Repo", "stars": "★ 12",
+        "desc": "one-line SPANISH description (two-pass; skip SEO/game-cheat noise)",
+        "meta": "Lang · License", "url": "https://github.com/owner/Repo" }
+    ],
+    "papers": [                          // 5 items, top hf_papers by upvotes
+      { "title": "Paper title",
+        "authors": "N upvotes",
+        "url": "https://arxiv.org/abs/…" }
+    ],
+    "community": [                       // 3–4 items, real community/self-hosting
+      { "src": "r/LocalLLaMA",              // from web[] — NEVER the SEO listicles
+        "title": "Spanish title (two-pass)",
+        "note": "Spanish one-liner", "url": "https://…" }
+    ]
+  },
 
   // NOTE: `body` is a LIST of flowing paragraphs (render.py turns each into
   // a <p>, and converts *term* markers into <em>term</em>). `summary` is a
@@ -440,6 +471,22 @@ uses); **Software libre para IA** holds the other open-source AI software
 most important item of the day (up to 700–800 words when it has material).
 
 ## Pitfalls (learned)
+- **The right column is OPTIONAL in render.py and used to ship at the
+curator's whim (incident 2026-10-27, user report «sin la columna de la
+derecha»):** this file's schema never documented `aside`, so the 08:30
+curation step omitted it on some days (present 10-26, absent 10-25 and
+10-27). `build_page` silently renders an empty `<aside>` wrapper when the
+key is missing — no error, no warning — and the old verify step never
+checked, so the omission reached the live site. Fix (v2.25.0): `aside` is
+REQUIRED in the schema (step 2), step 6 verifies all three `aside-block`s
+are populated on the live bytes before the day is declared shipped, and
+the 10:45 cron job checks it too. Build it from the SAME day's
+`material.json`: `gh_trending` → `trending` (5, Spanish descs, skip
+SEO/game-cheat repos), `hf_papers` → `papers` (top 5 by upvotes; `authors`
+slot holds «N upvotes» per convention; link to arXiv), `web[]` →
+`community` (3–4 REAL community/self-hosting items — skip the
+"best open LLM" listicles). Never publish with an empty column; if the
+material is thin, publish fewer items, but all three blocks stay.
 - **Mobile overflow came from `.chip{white-space:nowrap}`** (2026-10-25, user
   report "el HTML no parece adaptado al móvil"): a chip whose label was a long
   repo slug (`Hugging Face — cuantización GGUF (abenzerps/Spark-X2.6-4B-Quantized)`)
@@ -515,7 +562,9 @@ it was finished manually).
 - **10:45 — `iaahoy-verify`** (job `2a1b79015a05`, deliver: matrix home
   channel): vLLM is back. Verify the live site (root 200, permalink 200,
   `podcast.mp3` fresh > ~200 KB matching the local build mtime, cover 200,
-  swap log `PODCAST OK` + `PUBLISH OK`). If good → deliver the day's 2–4
+  swap log `PODCAST OK` + `PUBLISH OK`, and — since v2.25.0 — all THREE
+  `aside-block`s populated on the live bytes; if the column is empty,
+  build it from `material.json` and re-publish before delivering). If good → deliver the day's 2–4
   line Spanish summary (edition date + nº, portada headline, 2–3
   highlights, live URL) — **the user's daily message comes from THIS job,
   not from the 08:30 one**. If not live → recover with the GPU-free CPU path
