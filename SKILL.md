@@ -572,6 +572,30 @@ it was finished manually).
   (noting recovery); after two failed attempts, deliver a plain Spanish
   notice that the edition did not ship, with the error.
 
+**CRON JOBS NEED `provider: custom` + the gate `base_url` (incident 2026-10-30, edition lost).**
+All three of these jobs (`3c49b1337e9c` daily, `cc78349fa90e` continuation,
+`2a1b79015a05` verify) — like every other agent-mode cron job on this box —
+route their LLM through the **cron LLM gate** `127.0.0.1:8082` (`hermes-cron-llm-gate`
+systemd user service, `~/.hermes/hyperqwen/cron_llm_gate.py`), NOT directly at
+vLLM `:8081`. The gate serializes cron traffic (max 1 in-flight) so it never
+preempts the live agent / kanban workers that hold vLLM's two `max-num-seqs`
+slots — this IS the "lower priority so it doesn't interrupt the workers"
+agreed on 2026-10-29. The job records carry `base_url: http://127.0.0.1:8082/v1`
+**and** `provider: custom`. Both are required: hermes ≥ v2026.9.24 added a
+safety check (`tools/cronjob_job_args.py::_validate_cron_base_url`)
+that refuses any job with a `base_url` override but a **null** `provider`
+(`"base_url override requires an explicit provider"`). On 2026-10-29 the gate
+was wired with only `base_url` set; the `hermes` update that landed that same
+evening introduced the check, so on 2026-10-30 the 08:30 daily failed
+(`failed` in `cron/executions.db`) and the 10:00/10:45 stages were blocked too
+— the edition was lost. Fix was `hermes cron edit <job_id> --provider custom`
+on each (bare `custom` = keyless BYOK; the loopback gate needs no key, and the
+validator passes it — verified: `custom`+`:8082/v1` OK, empty+`:8082/v1`
+rejected). **After any `hermes` update, re-check `cron/jobs.json`: every
+`base_url` job must still have `provider` non-null**, or re-apply `--provider
+custom`. The gate health is `curl http://127.0.0.1:8082/health` (should be
+`ok:true`, 0 failed); it must be up before any gated job can run.
+
 **The swap is the ONLY publish path — never run `publish.py` by itself before
 the MP3 exists.** The job's cron prompt used to list "5 steps"
 (collect → curate → render → `publish.py` → verify) with the podcast-swap
